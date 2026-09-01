@@ -1,0 +1,764 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Emulador psql - Completo</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: #0d1117;
+    color: #c9d1d9;
+    font-family: 'Cascadia Code', 'Fira Code', 'Consolas', 'Courier New', monospace;
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+  }
+  header {
+    background: #161b22;
+    border-bottom: 1px solid #30363d;
+    padding: 12px 20px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+  header h1 { font-size: 1.05rem; color: #58a6ff; }
+  header .badge {
+    background: #238636;
+    color: white;
+    padding: 3px 10px;
+    border-radius: 12px;
+    font-size: 0.75rem;
+  }
+  #terminal {
+    flex: 1;
+    overflow-y: auto;
+    padding: 16px 20px;
+    font-size: 14px;
+    line-height: 1.5;
+  }
+  .line { margin-bottom: 2px; white-space: pre-wrap; word-break: break-all; }
+  .prompt { color: #3fb950; }
+  .error { color: #f85149; }
+  .success { color: #3fb950; }
+  .info { color: #8b949e; }
+  .result { color: #c9d1d9; }
+
+  #input-area {
+    background: #161b22;
+    border-top: 1px solid #30363d;
+    padding: 12px 20px;
+    display: flex;
+    gap: 10px;
+    align-items: center;
+  }
+  #prompt-label {
+    color: #3fb950;
+    white-space: nowrap;
+    font-weight: bold;
+  }
+  #cmd-input {
+    flex: 1;
+    background: #0d1117;
+    border: 1px solid #30363d;
+    color: #c9d1d9;
+    padding: 8px 12px;
+    font-family: inherit;
+    font-size: 14px;
+    border-radius: 6px;
+    outline: none;
+  }
+  #cmd-input:focus { border-color: #58a6ff; }
+  button {
+    background: #238636;
+    color: white;
+    border: none;
+    padding: 8px 14px;
+    border-radius: 6px;
+    cursor: pointer;
+    font-family: inherit;
+    font-size: 13px;
+  }
+  button:hover { background: #2ea043; }
+  .help-btn {
+    background: #21262d;
+    border: 1px solid #30363d;
+  }
+  .help-btn:hover { background: #30363d; }
+  .teoria-btn {
+    background: #1f6feb;
+    border: 1px solid #1f6feb;
+  }
+  .teoria-btn:hover { background: #388bfd; }
+
+  #help-panel, #teoria-panel {
+    display: none;
+    background: #161b22;
+    border-top: 1px solid #30363d;
+    padding: 18px 22px;
+    font-size: 13.5px;
+    max-height: 480px;
+    overflow-y: auto;
+    line-height: 1.55;
+  }
+
+  #help-panel h3 { color: #58a6ff; margin-bottom: 8px; margin-top: 14px; }
+  #help-panel h3:first-child { margin-top: 0; }
+  #help-panel code {
+    background: #0d1117;
+    padding: 2px 6px;
+    border-radius: 4px;
+    color: #79c0ff;
+  }
+  #help-panel ul { margin-left: 18px; margin-top: 6px; }
+  #help-panel li { margin-bottom: 5px; }
+
+  #teoria-panel h2 { color: #58a6ff; margin-bottom: 14px; font-size: 1.15rem; }
+  #teoria-panel h3 { color: #79c0ff; margin: 18px 0 10px 0; font-size: 1rem; }
+  #teoria-panel table { width: 100%; border-collapse: collapse; margin-bottom: 12px; font-size: 13px; }
+  #teoria-panel th { background: #0d1117; color: #58a6ff; text-align: left; padding: 8px 10px; border: 1px solid #30363d; }
+  #teoria-panel td { padding: 8px 10px; border: 1px solid #30363d; vertical-align: top; }
+  #teoria-panel tr:nth-child(even) { background: #0d1117; }
+  #teoria-panel code { background: #0d1117; padding: 2px 6px; border-radius: 4px; color: #79c0ff; }
+  #teoria-panel ul { margin: 8px 0 8px 20px; }
+  #teoria-panel li { margin-bottom: 6px; }
+  .resumen {
+    background: #0d1117;
+    border-left: 4px solid #238636;
+    padding: 12px 16px;
+    margin-top: 16px;
+    border-radius: 0 6px 6px 0;
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>Emulador psql — Roles + Alta/Baja/Modificación</h1>
+  <span class="badge">Unidad III · Completo</span>
+</header>
+
+<div id="terminal"></div>
+
+<!-- ==================== AYUDA ==================== -->
+<div id="help-panel">
+  <h3>1. Bases de datos</h3>
+  <ul>
+    <li><code>CREATE DATABASE compras;</code></li>
+    <li><code>\c compras</code> &nbsp;← conectar a una base</li>
+    <li><code>\l</code> &nbsp;← listar bases de datos</li>
+  </ul>
+
+  <h3>2. Roles y Usuarios</h3>
+  <ul>
+    <li><code>CREATE ROLE desarrolladores NOLOGIN;</code></li>
+    <li><code>CREATE ROLE soporte NOLOGIN;</code></li>
+    <li><code>CREATE USER salmada WITH PASSWORD 'ClaveSegura123';</code></li>
+    <li><code>GRANT desarrolladores TO salmada;</code></li>
+    <li><code>SET ROLE salmada;</code> &nbsp;/&nbsp; <code>RESET ROLE;</code></li>
+    <li><code>\du</code> &nbsp;← listar roles</li>
+    <li><code>SELECT * FROM pg_roles;</code></li>
+  </ul>
+
+  <h3>3. Permisos (GRANT)</h3>
+  <ul>
+    <li><code>GRANT CONNECT ON DATABASE compras TO desarrolladores;</code></li>
+    <li><code>GRANT USAGE ON SCHEMA public TO desarrolladores;</code></li>
+    <li><code>GRANT SELECT ON ALL TABLES IN SCHEMA public TO desarrolladores;</code></li>
+    <li><code>GRANT SELECT, INSERT ON ALL TABLES IN SCHEMA public TO soporte;</code></li>
+    <li><code>GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO rol;</code></li>
+  </ul>
+
+  <h3>4. Alta – Baja – Modificación</h3>
+  <ul>
+    <li><strong>Alta:</strong> <code>INSERT INTO cargos VALUES (3, 'Analista');</code></li>
+    <li><strong>Alta con columnas:</strong> <code>INSERT INTO ciudad (id, des) VALUES (1, 'Asunción');</code></li>
+    <li><strong>Modificación:</strong> <code>UPDATE cargos SET car_descri = 'Gerente General' WHERE id_car = 1;</code></li>
+    <li><strong>Baja:</strong> <code>DELETE FROM cargos WHERE id_car = 2;</code></li>
+    <li><code>SELECT * FROM cargos;</code></li>
+  </ul>
+
+  <h3>5. Consultas de tablas</h3>
+  <ul>
+    <li><code>\dt</code> &nbsp;← listar tablas</li>
+    <li><code>\d cargos</code> &nbsp;← ver campos de la tabla</li>
+    <li><code>SELECT version();</code></li>
+  </ul>
+
+  <h3>6. Eliminar Roles y Usuarios</h3>
+  <ul>
+    <li><code>DROP USER salmada;</code></li>
+    <li><code>DROP ROLE desarrolladores;</code></li>
+    <li><code>REASSIGN OWNED BY salmada TO postgres;</code></li>
+    <li><code>DROP OWNED BY salmada;</code></li>
+    <li><code>REVOKE desarrolladores FROM salmada;</code></li>
+  </ul>
+
+  <h3>7. Otros</h3>
+  <ul>
+    <li><code>\q</code> o <code>salir</code> → reiniciar el emulador</li>
+  </ul>
+</div>
+
+<!-- ==================== EXPLICACIONES ==================== -->
+<div id="teoria-panel">
+  <h2>Explicación de Roles, Usuarios y Permisos</h2>
+
+  <h3>2. Roles y Usuarios</h3>
+  <table>
+    <thead>
+      <tr>
+        <th style="width:38%">Comando</th>
+        <th style="width:18%">¿Qué hace?</th>
+        <th>Explicación sencilla</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><code>CREATE ROLE desarrolladores NOLOGIN;</code></td>
+        <td>Crea un rol de grupo</td>
+        <td>Crea un rol llamado <strong>desarrolladores</strong> que <strong>no puede conectarse</strong>. Se usa solo para agrupar permisos.</td>
+      </tr>
+      <tr>
+        <td><code>CREATE ROLE soporte NOLOGIN;</code></td>
+        <td>Crea otro rol de grupo</td>
+        <td>Igual que el anterior, para el equipo de “soporte”.</td>
+      </tr>
+      <tr>
+        <td><code>CREATE USER salmada WITH PASSWORD 'ClaveSegura123';</code></td>
+        <td>Crea un usuario</td>
+        <td>Crea un rol que <strong>sí puede conectarse</strong> y le asigna contraseña.</td>
+      </tr>
+      <tr>
+        <td><code>GRANT desarrolladores TO salmada;</code></td>
+        <td>Asigna el rol al usuario</td>
+        <td>Hace que <strong>salmada</strong> herede los permisos del grupo desarrolladores.</td>
+      </tr>
+      <tr>
+        <td><code>SET ROLE salmada;</code></td>
+        <td>Cambia temporalmente de rol</td>
+        <td>La sesión actúa como si fuera el usuario salmada (para probar permisos).</td>
+      </tr>
+      <tr>
+        <td><code>RESET ROLE;</code></td>
+        <td>Vuelve al rol original</td>
+        <td>Regresa a ser el superusuario (postgres).</td>
+      </tr>
+      <tr>
+        <td><code>\du</code></td>
+        <td>Lista los roles</td>
+        <td>Muestra todos los roles/usuarios del sistema.</td>
+      </tr>
+      <tr>
+        <td><code>SELECT * FROM pg_roles;</code></td>
+        <td>Consulta la tabla de roles</td>
+        <td>Versión SQL del comando \du.</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h3>3. Permisos (GRANT)</h3>
+  <table>
+    <thead>
+      <tr>
+        <th style="width:42%">Comando</th>
+        <th style="width:18%">¿Qué hace?</th>
+        <th>Explicación sencilla</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><code>GRANT CONNECT ON DATABASE compras TO desarrolladores;</code></td>
+        <td>Permite conectarse</td>
+        <td>Permite al rol conectarse a la base de datos.</td>
+      </tr>
+      <tr>
+        <td><code>GRANT USAGE ON SCHEMA public TO desarrolladores;</code></td>
+        <td>Permite usar el esquema</td>
+        <td>Permite ver y usar los objetos del esquema public.</td>
+      </tr>
+      <tr>
+        <td><code>GRANT SELECT ON ALL TABLES IN SCHEMA public TO desarrolladores;</code></td>
+        <td>Solo lectura</td>
+        <td>Solo puede consultar las tablas.</td>
+      </tr>
+      <tr>
+        <td><code>GRANT SELECT, INSERT ON ALL TABLES IN SCHEMA public TO soporte;</code></td>
+        <td>Lectura + Alta</td>
+        <td>Puede consultar e insertar datos.</td>
+      </tr>
+      <tr>
+        <td><code>GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO rol;</code></td>
+        <td>Todos los permisos</td>
+        <td>SELECT + INSERT + UPDATE + DELETE.</td>
+		
+	  </tr>
+	  
+    </tbody>
+  </table>
+	<h3>4. Comandos de eliminación</h3>
+<table>
+  <thead>
+    <tr>
+      <th style="width:38%">Comando</th>
+      <th style="width:20%">¿Qué hace?</th>
+      <th>Explicación sencilla</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code>DROP USER salmada;</code></td>
+      <td>Elimina un usuario</td>
+      <td>Borra definitivamente el usuario <strong>salmada</strong>. Solo funciona si el usuario <strong>no tiene objetos</strong> ni privilegios pendientes.</td>
+    </tr>
+    <tr>
+      <td><code>DROP ROLE desarrolladores;</code></td>
+      <td>Elimina un rol de grupo</td>
+      <td>Borra el rol <strong>desarrolladores</strong>. Solo funciona si el rol <strong>no tiene miembros</strong> ni objetos asociados.</td>
+    </tr>
+    <tr>
+      <td><code>REASSIGN OWNED BY salmada TO postgres;</code></td>
+      <td>Reasigna la propiedad de objetos</td>
+      <td>Cambia el dueño de todos los objetos (tablas, vistas, etc.) que pertenecen a <strong>salmada</strong> y se los asigna a <strong>postgres</strong>. Es el primer paso seguro antes de eliminar.</td>
+    </tr>
+    <tr>
+      <td><code>DROP OWNED BY salmada;</code></td>
+      <td>Elimina privilegios y objetos residuales</td>
+      <td>Borra todos los privilegios que le quedaban a <strong>salmada</strong> y cualquier objeto que todavía le pertenezca. Se usa después de <code>REASSIGN OWNED</code>.</td>
+    </tr>
+    <tr>
+      <td><code>REVOKE desarrolladores FROM salmada;</code></td>
+      <td>Quita la membresía</td>
+      <td>Saca al usuario <strong>salmada</strong> del rol/grupo <strong>desarrolladores</strong>. Es necesario hacerlo <strong>antes</strong> de poder eliminar el rol o el usuario.</td>
+    </tr>
+  </tbody>
+</table>
+  <div class="resumen">
+    <strong>Resumen rápido</strong>
+    <ul>
+      <li><strong>ROLE con NOLOGIN</strong> → Grupo de permisos</li>
+      <li><strong>USER</strong> → Persona que puede conectarse</li>
+      <li><strong>GRANT rol TO usuario</strong> → El usuario hereda los permisos del grupo</li>
+      <li><strong>GRANT privilegios ON ... TO rol</strong> → Define qué puede hacer el rol</li>
+    </ul>
+  </div>
+</div>
+
+<div id="input-area">
+  <span id="prompt-label">postgres=#</span>
+  <input type="text" id="cmd-input" placeholder="Escribe un comando SQL..." autocomplete="off" spellcheck="false">
+  <button onclick="ejecutar()">Ejecutar</button>
+  <button class="help-btn" onclick="toggleHelp()">Ayuda</button>
+  <button class="teoria-btn" onclick="toggleTeoria()">Explicaciones</button>
+</div>
+
+<script>
+// ===================== ESTADO =====================
+let currentDB = "postgres";
+let currentRole = "postgres";
+let databases = new Set(["postgres"]);
+let tables = { postgres: {} };
+
+function initComprasTables() {
+  tables["compras"] = {
+    cargos: {
+      columns: [
+        { name: "id_car", type: "integer" },
+        { name: "car_descri", type: "character varying(100)" }
+      ],
+      rows: [
+        { id_car: 1, car_descri: "Gerente" },
+        { id_car: 2, car_descri: "Supervisor" }
+      ]
+    }
+  };
+}
+
+let roles = {
+  postgres: {
+    canLogin: true,
+    superuser: true,
+    privileges: new Set(["CONNECT","USAGE","SELECT","INSERT","UPDATE","DELETE"]),
+    members: new Set()
+  }
+};
+let membership = {};
+
+// ===================== UI =====================
+const terminal = document.getElementById("terminal");
+const input = document.getElementById("cmd-input");
+const promptLabel = document.getElementById("prompt-label");
+
+function print(text, cls = "result") {
+  const div = document.createElement("div");
+  div.className = "line " + cls;
+  div.textContent = text;
+  terminal.appendChild(div);
+  terminal.scrollTop = terminal.scrollHeight;
+}
+
+function updatePrompt() {
+  const symbol = currentRole === "postgres" ? "#" : ">";
+  promptLabel.textContent = `${currentDB}=${symbol}`;
+}
+
+function hasPrivilege(priv) {
+  if (currentRole === "postgres") return true;
+  const rolesToCheck = new Set([currentRole]);
+  if (membership[currentRole]) membership[currentRole].forEach(r => rolesToCheck.add(r));
+  for (const r of rolesToCheck) {
+    if (roles[r] && roles[r].privileges.has(priv)) return true;
+  }
+  return false;
+}
+
+function getCurrentTables() {
+  return tables[currentDB] || {};
+}
+
+// ===================== MOTOR =====================
+function ejecutarComando(cmd) {
+  cmd = cmd.trim();
+  if (!cmd) return;
+
+  // Meta comandos
+  if (/^\\l\s*;?$/i.test(cmd) || /^\\list\s*;?$/i.test(cmd)) {
+    let out = "                                  List of databases\n";
+    out += "   Name    | Owner    | Encoding\n";
+    out += "-----------+----------+----------\n";
+    Array.from(databases).sort().forEach(db => {
+      out += ` ${db.padEnd(9)} | postgres | UTF8\n`;
+    });
+    out += `(${databases.size} rows)`;
+    return print(out);
+  }
+
+  if (/^\\du\s*;?$/i.test(cmd)) {
+    let out = "                                   List of roles\n";
+    out += " Role name        | Attributes          | Member of\n";
+    out += "------------------+---------------------+------------\n";
+    Object.keys(roles).sort().forEach(name => {
+      const r = roles[name];
+      let attrs = [];
+      if (r.superuser) attrs.push("Superuser");
+      if (!r.canLogin) attrs.push("Cannot login");
+      const members = r.members && r.members.size ? Array.from(r.members).join(", ") : "";
+      out += ` ${name.padEnd(16)} | ${attrs.join(", ").padEnd(19)} | ${members}\n`;
+    });
+    return print(out);
+  }
+
+  if (/^\\dt\s*;?$/i.test(cmd)) {
+    const tbls = getCurrentTables();
+    const names = Object.keys(tbls);
+    if (names.length === 0) return print("Did not find any relation.", "info");
+    let out = "             List of relations\n";
+    out += " Schema | Name   | Type  | Owner\n";
+    out += "--------+--------+-------+----------\n";
+    names.forEach(n => out += ` public | ${n.padEnd(6)} | table | postgres\n`);
+    out += `(${names.length} rows)`;
+    return print(out);
+  }
+
+  let m = cmd.match(/^\\d\s+(\w+)\s*;?$/i);
+  if (m) {
+    const tname = m[1].toLowerCase();
+    const tbls = getCurrentTables();
+    if (!tbls[tname]) return print(`Did not find any relation named "${tname}".`, "error");
+    const t = tbls[tname];
+    let out = `                            Table "public.${tname}"\n`;
+    out += "  Column    |          Type          | Nullable\n";
+    out += "------------+------------------------+----------\n";
+    t.columns.forEach(c => {
+      out += ` ${c.name.padEnd(10)} | ${c.type.padEnd(22)} | \n`;
+    });
+    return print(out);
+  }
+
+  if (/^SELECT\s+version\s*\(\s*\)\s*;?$/i.test(cmd)) {
+    return print(" PostgreSQL 16.3 on x86_64-pc-linux-gnu\n(1 row)");
+  }
+
+  // ===== SELECT * FROM pg_roles (va primero) =====
+  if (/^SELECT\s+\*\s+FROM\s+pg_roles\s*;?$/i.test(cmd)) {
+    let out = " rolname          | rolcanlogin | rolsuper \n";
+    out += "------------------+-------------+----------\n";
+    Object.keys(roles).sort().forEach(name => {
+      const r = roles[name];
+      out += ` ${name.padEnd(16)} | ${(r.canLogin?"t":"f").padEnd(11)} | ${r.superuser?"t":"f"}\n`;
+    });
+    out += `(${Object.keys(roles).length} rows)`;
+    return print(out);
+  }
+
+  // ========== INSERT mejorado (con y sin columnas) ==========
+  m = cmd.match(/^INSERT\s+INTO\s+(\w+)(?:\s*\(([^)]+)\))?\s+VALUES\s*\((.+)\)\s*;?$/i);
+  if (m) {
+    const tname = m[1].toLowerCase();
+
+    // Verificar permiso INSERT
+    if (!hasPrivilege("INSERT")) {
+      return print(`ERROR:  permiso denegado a la tabla ${tname}\nEstado SQL: 42501`, "error");
+    }
+
+    const tbls = getCurrentTables();
+    if (!tbls[tname]) {
+      return print(`ERROR:  la relación «${tname}» no existe`, "error");
+    }
+
+    // Valores
+    const values = m[3].split(",").map(v => {
+      v = v.trim();
+      if ((v.startsWith("'") && v.endsWith("'")) || (v.startsWith('"') && v.endsWith('"'))) {
+        return v.slice(1, -1);
+      }
+      if (!isNaN(v)) return Number(v);
+      return v;
+    });
+
+    const row = {};
+
+    // Si especificó columnas: INSERT INTO tabla (col1, col2) VALUES (...)
+    if (m[2]) {
+      const cols = m[2].split(",").map(c => c.trim().toLowerCase());
+      cols.forEach((col, i) => {
+        row[col] = values[i] !== undefined ? values[i] : null;
+      });
+    } 
+    // Si no especificó columnas
+    else {
+      tbls[tname].columns.forEach((col, i) => {
+        row[col.name] = values[i] !== undefined ? values[i] : null;
+      });
+    }
+
+    tbls[tname].rows.push(row);
+    return print("INSERT 0 1", "success");
+  }
+
+  // UPDATE
+  m = cmd.match(/^UPDATE\s+(\w+)\s+SET\s+(\w+)\s*=\s*'?([^']*)'?(?:\s+WHERE\s+(\w+)\s*=\s*'?([^']*)'?)?\s*;?$/i);
+  if (m) {
+    if (!hasPrivilege("UPDATE")) return print(`ERROR:  permiso denegado a la tabla ${m[1]}\nEstado SQL: 42501`, "error");
+    const tname = m[1].toLowerCase();
+    const col = m[2].toLowerCase();
+    const val = m[3];
+    const whereCol = m[4] ? m[4].toLowerCase() : null;
+    const whereVal = m[5];
+    const tbls = getCurrentTables();
+    if (!tbls[tname]) return print(`ERROR:  la relación «${tname}» no existe`, "error");
+    let count = 0;
+    tbls[tname].rows.forEach(r => {
+      if (!whereCol || String(r[whereCol]) === String(whereVal)) {
+        r[col] = isNaN(val) ? val : Number(val);
+        count++;
+      }
+    });
+    return print(`UPDATE ${count}`, "success");
+  }
+
+  // DELETE
+  m = cmd.match(/^DELETE\s+FROM\s+(\w+)(?:\s+WHERE\s+(\w+)\s*=\s*'?([^']*)'?)?\s*;?$/i);
+  if (m) {
+    if (!hasPrivilege("DELETE")) return print(`ERROR:  permiso denegado a la tabla ${m[1]}\nEstado SQL: 42501`, "error");
+    const tname = m[1].toLowerCase();
+    const whereCol = m[2] ? m[2].toLowerCase() : null;
+    const whereVal = m[3];
+    const tbls = getCurrentTables();
+    if (!tbls[tname]) return print(`ERROR:  la relación «${tname}» no existe`, "error");
+    const before = tbls[tname].rows.length;
+    if (whereCol) {
+      tbls[tname].rows = tbls[tname].rows.filter(r => String(r[whereCol]) !== String(whereVal));
+    } else {
+      tbls[tname].rows = [];
+    }
+    return print(`DELETE ${before - tbls[tname].rows.length}`, "success");
+  }
+
+  // CREATE TABLE
+  m = cmd.match(/^CREATE\s+TABLE\s+(\w+)\s*\((.+)\)\s*;?$/i);
+  if (m) {
+    if (!hasPrivilege("INSERT")) return print("ERROR:  permiso denegado", "error");
+    const tname = m[1].toLowerCase();
+    const cols = m[2].split(",").map(c => {
+      const parts = c.trim().split(/\s+/);
+      return { name: parts[0].toLowerCase(), type: parts.slice(1).join(" ") || "text" };
+    });
+    if (!tables[currentDB]) tables[currentDB] = {};
+    if (tables[currentDB][tname]) return print(`ERROR:  la relación "${tname}" ya existe`, "error");
+    tables[currentDB][tname] = { columns: cols, rows: [] };
+    return print("CREATE TABLE", "success");
+  }
+
+  // CREATE DATABASE
+  m = cmd.match(/^CREATE\s+DATABASE\s+(\w+)\s*;?$/i);
+  if (m) {
+    const dbName = m[1].toLowerCase();
+    if (databases.has(dbName)) return print(`ERROR:  la base de datos "${dbName}" ya existe`, "error");
+    databases.add(dbName);
+    tables[dbName] = {};
+    if (dbName === "compras") initComprasTables();
+    return print("CREATE DATABASE", "success");
+  }
+
+  // \c
+  m = cmd.match(/^\\c(?:onnect)?\s+(\w+)\s*;?$/i);
+  if (m) {
+    const dbName = m[1].toLowerCase();
+    if (!databases.has(dbName)) return print(`ERROR:  no existe la base de datos «${dbName}»`, "error");
+    currentDB = dbName;
+    updatePrompt();
+    return print(`You are now connected to database "${dbName}" as user "${currentRole}".`, "success");
+  }
+
+  // CREATE ROLE
+  m = cmd.match(/^CREATE\s+ROLE\s+(\w+)\s+NOLOGIN\s*;?$/i);
+  if (m) {
+    const name = m[1].toLowerCase();
+    if (roles[name]) return print(`ERROR:  el rol "${name}" ya existe`, "error");
+    roles[name] = { canLogin: false, superuser: false, privileges: new Set(), members: new Set() };
+    return print("CREATE ROLE", "success");
+  }
+
+  // CREATE USER
+  m = cmd.match(/^CREATE\s+USER\s+(\w+)\s+WITH\s+PASSWORD\s+'[^']*'\s*;?$/i);
+  if (m) {
+    const name = m[1].toLowerCase();
+    if (roles[name]) return print(`ERROR:  el rol "${name}" ya existe`, "error");
+    roles[name] = { canLogin: true, superuser: false, privileges: new Set(), members: new Set() };
+    membership[name] = new Set();
+    return print("CREATE ROLE", "success");
+  }
+
+  // GRANT múltiples
+  m = cmd.match(/^GRANT\s+([\w\s,]+)\s+ON\s+ALL\s+TABLES\s+IN\s+SCHEMA\s+\w+\s+TO\s+(\w+)\s*;?$/i);
+  if (m) {
+    const privsRaw = m[1];
+    const role = m[2].toLowerCase();
+    if (!roles[role]) return print(`ERROR:  no existe el rol «${role}»`, "error");
+    const privs = privsRaw.split(",").map(p => p.trim().toUpperCase());
+    const valid = ["SELECT", "INSERT", "UPDATE", "DELETE"];
+    for (const p of privs) {
+      if (!valid.includes(p)) return print(`ERROR:  privilegio no reconocido: ${p}`, "error");
+      roles[role].privileges.add(p);
+    }
+    return print("GRANT", "success");
+  }
+
+  m = cmd.match(/^GRANT\s+CONNECT\s+ON\s+DATABASE\s+(\w+)\s+TO\s+(\w+)\s*;?$/i);
+  if (m) {
+    const role = m[2].toLowerCase();
+    if (!roles[role]) return print(`ERROR:  no existe el rol «${role}»`, "error");
+    roles[role].privileges.add("CONNECT");
+    return print("GRANT", "success");
+  }
+
+  m = cmd.match(/^GRANT\s+USAGE\s+ON\s+SCHEMA\s+\w+\s+TO\s+(\w+)\s*;?$/i);
+  if (m) {
+    const role = m[1].toLowerCase();
+    if (!roles[role]) return print(`ERROR:  no existe el rol «${role}»`, "error");
+    roles[role].privileges.add("USAGE");
+    return print("GRANT", "success");
+  }
+
+  m = cmd.match(/^GRANT\s+(\w+)\s+TO\s+(\w+)\s*;?$/i);
+  if (m) {
+    const group = m[1].toLowerCase();
+    const user = m[2].toLowerCase();
+    if (!roles[group]) return print(`ERROR:  no existe el rol «${group}»`, "error");
+    if (!roles[user]) return print(`ERROR:  no existe el rol «${user}»`, "error");
+    roles[group].members.add(user);
+    if (!membership[user]) membership[user] = new Set();
+    membership[user].add(group);
+    return print("GRANT ROLE", "success");
+  }
+
+  m = cmd.match(/^SET\s+ROLE\s+(\w+)\s*;?$/i);
+  if (m) {
+    const role = m[1].toLowerCase();
+    if (!roles[role]) return print(`ERROR:  no existe el rol «${role}»`, "error");
+    currentRole = role;
+    updatePrompt();
+    return print("SET", "success");
+  }
+
+  if (/^RESET\s+ROLE\s*;?$/i.test(cmd)) {
+    currentRole = "postgres";
+    updatePrompt();
+    return print("RESET", "success");
+  }
+
+  // SELECT * FROM tabla
+  m = cmd.match(/^SELECT\s+\*\s+FROM\s+(public\.)?(\w+)\s*;?$/i);
+  if (m) {
+    const tname = m[2].toLowerCase();
+    if (!hasPrivilege("SELECT")) return print(`ERROR:  permiso denegado a la tabla ${tname}`, "error");
+    const tbls = getCurrentTables();
+    if (!tbls[tname]) return print(`ERROR:  la relación «${tname}» no existe`, "error");
+    const t = tbls[tname];
+    if (t.rows.length === 0) return print("(0 rows)");
+    const cols = t.columns.map(c => c.name);
+    let out = " " + cols.join(" | ") + "\n";
+    out += "-" + cols.map(c => "-".repeat(Math.max(c.length, 4) + 2)).join("+") + "\n";
+    t.rows.forEach(r => {
+      out += " " + cols.map(c => String(r[c] ?? "").padEnd(Math.max(c.length, 4))).join(" | ") + "\n";
+    });
+    out += `(${t.rows.length} rows)`;
+    return print(out);
+  }
+
+  if (/^REASSIGN\s+OWNED/i.test(cmd)) return print("REASSIGN OWNED", "success");
+  if (/^DROP\s+OWNED/i.test(cmd)) return print("DROP OWNED", "success");
+  if (/^REVOKE\s+/i.test(cmd)) return print("REVOKE", "success");
+
+  m = cmd.match(/^DROP\s+(USER|ROLE)\s+(\w+)\s*;?$/i);
+  if (m) {
+    const name = m[2].toLowerCase();
+    if (!roles[name]) return print(`ERROR:  no existe el rol «${name}»`, "error");
+    delete roles[name];
+    delete membership[name];
+    return print("DROP ROLE", "success");
+  }
+
+  if (/^(\\q|quit|exit|salir)\s*;?$/i.test(cmd)) {
+    location.reload();
+    return;
+  }
+
+  print("ERROR:  comando no reconocido", "error");
+}
+
+// Eventos
+function ejecutar() {
+  const cmd = input.value;
+  if (!cmd.trim()) return;
+  print(`${promptLabel.textContent} ${cmd}`, "prompt");
+  ejecutarComando(cmd);
+  input.value = "";
+  input.focus();
+}
+
+input.addEventListener("keydown", e => {
+  if (e.key === "Enter") ejecutar();
+});
+
+function toggleHelp() {
+  document.getElementById("teoria-panel").style.display = "none";
+  const panel = document.getElementById("help-panel");
+  panel.style.display = panel.style.display === "block" ? "none" : "block";
+}
+
+function toggleTeoria() {
+  document.getElementById("help-panel").style.display = "none";
+  const panel = document.getElementById("teoria-panel");
+  panel.style.display = panel.style.display === "block" ? "none" : "block";
+}
+
+// Inicio
+print("psql (16.3, server 15.7)", "info");
+print("Emulador actualizado - INSERT con columnas + control de permisos", "info");
+print("", "info");
+input.focus();
+</script>
+</body>
+</html>

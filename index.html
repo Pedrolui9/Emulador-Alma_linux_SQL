@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Emulador psql - AlmaLinux</title>
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body class="theme-alma">
+<header class="topbar">
+  <div class="topbar-left">
+    <span style="color:var(--accent)">◆</span>
+    <span class="topbar-title">AlmaLinux 9.4 — psql 16.3 Emulator</span>
+    <span class="kernel">kernel 5.14.0-427.el9.x86_64</span>
+  </div>
+  <div class="topbar-right">
+    <span id="clock"></span>
+    <span class="user-badge" id="roleBadge">● postgres#</span>
+  </div>
+</header>
+
+<div class="workspace workspace-full">
+  <main class="terminal-window terminal-full">
+    <div class="window-bar">
+      <div class="window-controls">
+        <span class="ctrl close"></span>
+        <span class="ctrl min"></span>
+        <span class="ctrl max"></span>
+      </div>
+      <div class="window-title"><span id="windowTitle">postgres=# — psql — AlmaLinux — 80x24</span></div>
+      <div class="window-actions">
+        <button id="btnCopy" title="Copiar">[C]</button>
+        <button id="btnFullscreen" title="Pantalla completa">[ ]</button>
+      </div>
+    </div>
+
+    <div id="terminal" class="terminal">
+      <!-- Esquina sesión - RF info visible sin sidebar -->
+      <div id="cornerSession" class="corner-session">
+        <div class="corner-title">◆ sesión</div>
+        <div id="sessionInfo">Rol: postgres<br>BD: postgres<br>Esquema: public</div>
+      </div>
+      <div id="output"></div>
+    </div>
+
+    <!-- Entrada fija abajo — no hace falta scrollear, la info sube -->
+    <div class="prompt-bar" id="inputLine">
+      <span id="prompt" class="prompt"></span>
+      <span id="prompt-label" style="color:var(--accent);font-weight:600;white-space:nowrap">postgres=#</span>
+      <input id="cmdInput" type="text" autocomplete="off" spellcheck="false" autofocus placeholder="Escribe un comando...  (\ayuda)">
+      <span class="cursor"></span>
+    </div>
+
+    <div id="input-area">
+      <span class="input-label">Consola:</span>
+      <button id="btnEjecutar">▶ Ejecutar</button>
+      <span class="input-hint">Enter o Ejecutar • <code>\ayuda</code> para comandos</span>
+      <span class="input-right">
+        <button class="help-btn" id="btnHelpMini">Ayuda</button>
+        <button class="teoria-btn" id="btnTeoriaMini">Teoría</button>
+      </span>
+    </div>
+
+    <!-- Panels (ocultos, se muestran con \ayuda \teoria) -->
+    <div id="help-panel">
+      <h3>Base de datos</h3>
+      <ul>
+        <li><code>CREATE DATABASE compras;</code> — solo superuser</li>
+        <li><code>\c compras</code> / <code>\connect compras</code> — requiere CONNECT</li>
+        <li><code>\l</code> / <code>\list</code></li>
+        <li><code>BACKUP DATABASE compras;</code> — dump simulado (RF-09)</li>
+      </ul>
+      <h3>Roles y usuarios</h3>
+      <ul>
+        <li><code>CREATE ROLE desarrolladores NOLOGIN;</code></li>
+        <li><code>CREATE USER salmada WITH PASSWORD 'Clave123';</code></li>
+        <li><code>GRANT desarrolladores TO salmada;</code> / <code>REVOKE desarrolladores FROM salmada;</code></li>
+        <li><code>SET ROLE salmada;</code> / <code>RESET ROLE;</code> / <code>\du</code></li>
+      </ul>
+      <h3>Permisos (validados 42501)</h3>
+      <ul>
+        <li><code>GRANT CONNECT ON DATABASE compras TO desarrolladores;</code></li>
+        <li><code>GRANT USAGE ON SCHEMA public TO desarrolladores;</code></li>
+        <li><code>GRANT CREATE ON SCHEMA public TO desarrolladores;</code> — DDL</li>
+        <li><code>GRANT SELECT ON ALL TABLES IN SCHEMA public TO desarrolladores;</code></li>
+        <li><code>GRANT SELECT, INSERT ON ALL TABLES IN SCHEMA public TO soporte;</code></li>
+        <li><code>REVOKE SELECT ON ALL TABLES IN SCHEMA public FROM desarrolladores;</code></li>
+      </ul>
+      <h3>LMD / DDL</h3>
+      <ul>
+        <li><code>CREATE TABLE t (id INT, des VARCHAR(100));</code> — requiere CREATE+USAGE</li>
+        <li><code>\dt</code> / <code>\d cargos</code> — requiere USAGE</li>
+        <li><code>SELECT * FROM cargos;</code> — requiere SELECT</li>
+        <li><code>INSERT INTO cargos VALUES (3,'Analista');</code> — requiere INSERT</li>
+        <li><code>UPDATE …</code> / <code>DELETE …</code></li>
+      </ul>
+      <h3>Linux / Temas (nuevos meta-comandos)</h3>
+      <ul>
+        <li><code>\tema</code> — listar temas • <code>\tema set hacker</code> — cambiar</li>
+        <li><code>\color</code> — ver colores • <code>\color bg #000 fg #0f0</code> / <code>\color reset</code></li>
+        <li><code>\acciones</code> — acciones rápidas (equiv. a quick-actions)</li>
+        <li><code>\ayuda</code> / <code>\teoria</code> / <code>help</code></li>
+        <li><code>status</code> / <code>neofetch</code> / <code>clear</code> / <code>\q</code></li>
+      </ul>
+    </div>
+
+    <div id="teoria-panel">
+      <h2>Roles, Usuarios y Permisos — Validación estricta</h2>
+      <div class="callout-error">
+        <b style="color:#f85149">! Sin rol con privilegios no hay LDD ni LMD:</b><br>
+        DDL → <code>CREATE+USAGE</code> en schema • LMD → <code>SELECT/INSERT/UPDATE/DELETE</code> + <code>USAGE</code> por separado. Error <code>42501</code> en rojo.
+      </div>
+      <h3>Matriz</h3>
+      <table>
+        <thead><tr><th>Operación</th><th>Privilegio</th><th>Sin permiso</th></tr></thead>
+        <tbody>
+          <tr><td>\c compras</td><td>CONNECT</td><td>42501</td></tr>
+          <tr><td>CREATE TABLE</td><td>CREATE+USAGE</td><td>42501 esquema</td></tr>
+          <tr><td>SELECT</td><td>SELECT+USAGE</td><td>42501 tabla</td></tr>
+          <tr><td>INSERT</td><td>INSERT+USAGE</td><td>42501</td></tr>
+          <tr><td>UPDATE / DELETE</td><td>UPDATE / DELETE</td><td>42501</td></tr>
+        </tbody>
+      </table>
+      <pre style="background:var(--bg);border:1px solid var(--border);padding:10px;border-radius:6px;font-size:11px;overflow:auto">CREATE ROLE desarrolladores NOLOGIN;
+CREATE USER salmada WITH PASSWORD '123';
+GRANT CONNECT ON DATABASE compras TO desarrolladores;
+GRANT USAGE ON SCHEMA public TO desarrolladores;
+GRANT SELECT ON ALL TABLES IN SCHEMA public TO desarrolladores;
+SET ROLE salmada; \c compras
+SELECT * FROM cargos; -- OK
+INSERT INTO cargos VALUES (3,'X'); -- ERROR 42501</pre>
+    </div>
+
+    <div class="statusbar">
+      <span id="statusDb">● postgres</span>
+      <span id="statusRole">● postgres</span>
+      <span id="statusPrivs">superuser</span>
+      <span class="right">AlmaLinux • psql 16.3 • OFFLINE • todo por comandos</span>
+    </div>
+  </main>
+</div>
+
+<input type="file" id="fileImport" accept=".json" hidden>
+<script src="js/app.js"></script>
+</body>
+</html>
