@@ -811,10 +811,10 @@ class Terminal{
       }
     }
 
-    // No hay pendiente: verificar si es SQL que necesita ; y no lo tiene
-    const sqlNeedsSemi=/^(CREATE|INSERT|UPDATE|DELETE|SELECT|DROP|TRUNCATE|GRANT|REVOKE|BACKUP|ALTER)\b/i.test(cmd);
-    const isMetaNoSemi=/^(\\|help|clear|cls|history|status|neofetch|whoami|pwd|date|uname|ls|theme|color)\b/i.test(cmd);
-    if(sqlNeedsSemi && !isMetaNoSemi && !cmd.endsWith(';')){
+    // No hay pendiente: verificar si necesita ; - ahora TODO necesita ; excepto whitelist corta (como en AlmaLinux)
+    // Whitelist que NO necesita ; : help, clear, status, etc y \q (salida). \c, \l, \dt, \d, \du sí necesitan ; como pide el usuario
+    const isNoSemiWhitelist=/^(help|clear|cls|history|status|neofetch|whoami|pwd|date|uname|ls|theme|color|\\tema|\\color|\\acciones|\\ayuda|\\teoria|\\q|quit|exit|salir)(\s|;|$)/i.test(cmd);
+    if(!isNoSemiWhitelist && !cmd.endsWith(';')){
       this.pending=cmd;
       this.isPending=true;
       this.print(`<span style="color:var(--accent)">${this.escapeHtml(this.rm.currentDB)}=${sym}</span> ${this.escapeHtml(cmd)}`, 'line input');
