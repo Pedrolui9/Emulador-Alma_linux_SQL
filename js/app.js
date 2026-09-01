@@ -334,8 +334,15 @@ class DatabaseEngine{
         const obj=JSON.parse(raw);
         if(obj.databases){
           this.databases=obj.databases;
-          // ensure owner field exists
-          for(let db in this.databases) for(let t in this.databases[db].tables) if(!this.databases[db].tables[t].owner) this.databases[db].tables[t].owner='postgres';
+          // ensure owner y constraints por compatibilidad
+          for(let db in this.databases) for(let t in this.databases[db].tables){
+            if(!this.databases[db].tables[t].owner) this.databases[db].tables[t].owner='postgres';
+            this.databases[db].tables[t].columns.forEach(c=>{
+              if(c.notNull===undefined) c.notNull=false;
+              if(c.unique===undefined) c.unique=false;
+              if(c.primaryKey===undefined) c.primaryKey=false;
+            });
+          }
         }
         if(obj.currentDB) this.rm.currentDB=obj.currentDB;
         if(obj.currentRole) this.rm.currentRole=obj.currentRole;
@@ -425,6 +432,59 @@ class DatabaseEngine{
     t.rows=[];
     this.save();
   }
+  // ALTER TABLE - DDL para UPDATE/DELETE de estructura
+  alterTableAddColumn(tableName, colDef, actor){
+    const db=this.rm.currentDB;
+    if(!this.rm.canCreateInSchema(actor, db, 'public')) throw new Error(`ERROR:  permiso denegado para esquema public\nEstado SQL: 42501`);
+    const table=this.getTable(tableName);
+    if(!this.rm.isSuperUser(actor) && table.owner!==actor.toLowerCase()) throw new Error(`ERROR:  debe ser dueño de la relación ${tableName} o superusuario`);
+    if(table.columns.find(c=>c.name.toLowerCase()===colDef.name.toLowerCase())) throw new Error(`ERROR:  la columna «${colDef.name}» ya existe`);
+    table.columns.push(colDef);
+    // Añadir null a filas existentes, pero si NOT NULL sin default, debe fallar si hay filas
+    if((colDef.notNull || colDef.primaryKey) && table.rows.length>0){
+      throw new Error(`ERROR:  la columna «${colDef.name}» contiene restricción NOT NULL y la tabla no está vacía\nHINT:  Añada la columna sin NOT NULL primero, luego actualice valores.`);
+    }
+    table.rows.forEach(r=> r[colDef.name]=null);
+    this.save();
+  }
+  alterTableDropColumn(tableName, colName, actor){
+    const db=this.rm.currentDB;
+    if(!this.rm.canCreateInSchema(actor, db, 'public')) throw new Error(`ERROR:  permiso denegado para esquema public\nEstado SQL: 42501`);
+    const table=this.getTable(tableName);
+    if(!this.rm.isSuperUser(actor) && table.owner!==actor.toLowerCase()) throw new Error(`ERROR:  debe ser dueño de la relación ${tableName} o superusuario`);
+    const idx=table.columns.findIndex(c=>c.name.toLowerCase()===colName.toLowerCase());
+    if(idx===-1) throw new Error(`ERROR:  la columna «${colName}» no existe`);
+    table.columns.splice(idx,1);
+    table.rows.forEach(r=> delete r[colName]);
+    // También borrar posibles referencias por nombre original
+    const realName=table.columns[idx]?.name;
+    this.save();
+  }
+  alterTableRename(tableName, newName, actor){
+    const tbls=this.getCurrentTables();
+    const k=tableName.toLowerCase();
+    const nk=newName.toLowerCase();
+    if(!tbls[k]) throw new Error(`ERROR:  la relación «${tableName}» no existe`);
+    if(tbls[nk]) throw new Error(`ERROR:  la relación «${newName}» ya existe`);
+    if(!this.rm.canCreateInSchema(actor, this.rm.currentDB, 'public')) throw new Error(`ERROR:  permiso denegado para esquema public\nEstado SQL: 42501`);
+    if(!this.rm.isSuperUser(actor) && tbls[k].owner!==actor.toLowerCase()) throw new Error(`ERROR:  debe ser dueño de la relación ${tableName} o superusuario`);
+    tbls[nk]=tbls[k];
+    tbls[nk].nameOriginal=newName;
+    delete tbls[k];
+    this.save();
+  }
+  alterTableRenameColumn(tableName, oldCol, newCol, actor){
+    const table=this.getTable(tableName);
+    if(!this.rm.canCreateInSchema(actor, this.rm.currentDB, 'public')) throw new Error(`ERROR:  permiso denegado para esquema public\nEstado SQL: 42501`);
+    if(!this.rm.isSuperUser(actor) && table.owner!==actor.toLowerCase()) throw new Error(`ERROR:  debe ser dueño de la relación ${tableName} o superusuario`);
+    const col=table.columns.find(c=>c.name.toLowerCase()===oldCol.toLowerCase());
+    if(!col) throw new Error(`ERROR:  la columna «${oldCol}» no existe`);
+    if(table.columns.find(c=>c.name.toLowerCase()===newCol.toLowerCase())) throw new Error(`ERROR:  la columna «${newCol}» ya existe`);
+    const oldName=col.name;
+    col.name=newCol;
+    table.rows.forEach(r=>{ if(r[oldName]!==undefined){ r[newCol]=r[oldName]; delete r[oldName]; }});
+    this.save();
+  }
   describe(name){ return this.getTable(name); }
   insert(tableName, obj, actor){
     const db=this.rm.currentDB;
@@ -437,7 +497,21 @@ class DatabaseEngine{
         for(let k in obj) if(k.toLowerCase()===col.name.toLowerCase()){ val=obj[k]; break; }
       }
       if(val===undefined) val=null;
-      row[col.name]=this.coerce(val, col.type);
+      const coerced=this.coerce(val, col.type);
+      // NOT NULL validación
+      if((col.notNull || col.primaryKey) && (coerced===null || coerced===undefined)){
+        throw new Error(`ERROR:  el valor nulo en la columna «${col.name}» viola la restricción not-null\nDETAIL:  La columna «${col.name}» de la relación «${tableName}» contiene restricción NOT NULL.\nEstado SQL: 23502`);
+      }
+      row[col.name]=coerced;
+    });
+    // UNIQUE / PRIMARY KEY validación
+    table.columns.forEach(col=>{
+      if((col.unique || col.primaryKey) && row[col.name]!==null){
+        const exists=table.rows.some(r=> String(r[col.name])===String(row[col.name]));
+        if(exists){
+          throw new Error(`ERROR:  llave duplicada viola restricción de unicidad «${tableName}_${col.name}_key»\nDETAIL:  La llave (${col.name})=(${row[col.name]}) ya existe.\nEstado SQL: 23505`);
+        }
+      }
     });
     table.rows.push(row);
     this.save();
@@ -507,12 +581,33 @@ class DatabaseEngine{
     const db=this.rm.currentDB;
     if(!this.rm.canUpdate(actor, db, 'public', tableName)) throw new Error(`ERROR:  permiso denegado a la tabla ${tableName}\nEstado SQL: 42501`);
     const table=this.getTable(tableName);
+    // Pre-validar NOT NULL y UNIQUE antes de modificar
+    const rowsToUpdate=table.rows.filter(r=> !whereFn || whereFn(r));
+    // Validar cada fila
+    for(let row of rowsToUpdate){
+      for(let k in setObj){
+        const real=table.columns.find(c=>c.name.toLowerCase()===k.toLowerCase());
+        if(!real) throw new Error(`ERROR:  la columna «${k}» no existe`);
+        const newVal=this.coerce(setObj[k], real.type);
+        if((real.notNull || real.primaryKey) && (newVal===null || newVal===undefined)){
+          throw new Error(`ERROR:  el valor nulo en la columna «${real.name}» viola la restricción not-null\nEstado SQL: 23502`);
+        }
+        if((real.unique || real.primaryKey) && newVal!==null){
+          const conflict=table.rows.some(r=> r!==row && String(r[real.name])===String(newVal));
+          // También verificar conflicto entre filas que se actualizan al mismo valor
+          const conflictInBatch=rowsToUpdate.some(r=> r!==row && String(this.coerce(setObj[k], real.type))===String(newVal) && String(r[real.name])!==String(newVal));
+          // Si el nuevo valor ya existe en otra fila (incluyendo no actualizadas) -> error
+          if(conflict){
+            throw new Error(`ERROR:  llave duplicada viola restricción de unicidad «${tableName}_${real.name}_key»\nDETAIL:  La llave (${real.name})=(${newVal}) ya existe.\nEstado SQL: 23505`);
+          }
+        }
+      }
+    }
     let count=0;
     table.rows.forEach(row=>{
       if(!whereFn || whereFn(row)){
         for(let k in setObj){
           const real=table.columns.find(c=>c.name.toLowerCase()===k.toLowerCase());
-          if(!real) throw new Error(`ERROR:  la columna «${k}» no existe`);
           row[real.name]=this.coerce(setObj[k], real.type);
         }
         count++;
@@ -564,6 +659,8 @@ class Terminal{
     this.rm=rm;
     this.history=[];
     this.histIndex=-1;
+    this.pending=''; // buffer para sentencias sin ;
+    this.isPending=false;
     this.outputEl=document.getElementById('output');
     this.inputEl=document.getElementById('cmdInput');
     this.promptEl=document.getElementById('prompt');
@@ -587,12 +684,13 @@ class Terminal{
     const db=this.rm.currentDB;
     const role=this.rm.currentRole;
     const sym = this.rm.isSuperUser(role) ? '#' : '>';
-    // RF-02: prompt dinámico psql real: postgres=# | compras=>  y también etiquetado largo para status
-    this.promptEl.textContent=`${db}=${sym} `;
+    // RF-02: prompt dinámico + continuación si falta ;
+    const basePrompt = this.isPending ? `${db}-${sym} ` : `${db}=${sym} `;
+    this.promptEl.textContent=basePrompt;
     this.promptEl.style.color=this.rm.isSuperUser(role)? 'var(--accent)' : 'var(--accent2)';
     document.getElementById('windowTitle').textContent=`${db}=${sym} — ${role} — psql — AlmaLinux — 80x24`;
     const promptLabel=document.getElementById('prompt-label');
-    if(promptLabel) promptLabel.textContent=`${db}=${sym}`;
+    if(promptLabel) promptLabel.textContent= this.isPending ? `${db}-${sym}` : `${db}=${sym}`;
     // badge mantiene rol
     document.getElementById('roleBadge').textContent=`● ${role}${sym}`;
     const sess=document.getElementById('sessionInfo');
@@ -682,13 +780,50 @@ class Terminal{
     this.print(``, 'line');
   }
   exec(raw){
-    const cmd=raw.trim();
+    let cmd=raw.trim();
     if(!cmd) return;
     this.history.push(cmd);
     if(this.history.length>200) this.history.shift();
     this.histIndex=-1;
     const sym=this.rm.isSuperUser(this.rm.currentRole)? '#': '>';
-    const promptEcho=`${this.rm.currentDB}=${sym} ${this.escapeHtml(cmd)}`;
+
+    // Si hay sentencia pendiente (sin ;), concatenar con espacio
+    if(this.pending){
+      this.print(`<span style="color:var(--accent)">${this.escapeHtml(this.rm.currentDB)}-${sym}</span> ${this.escapeHtml(cmd)}`, 'line muted');
+      this.pending += ' ' + cmd;
+      if(!this.pending.trim().endsWith(';')){
+        this.isPending=true;
+        this.updatePrompt();
+        return;
+      } else {
+        const full=this.pending;
+        this.pending='';
+        this.isPending=false;
+        this.updatePrompt();
+        // Ejecutar el buffer completo sin re-imprimir (ya se imprimió línea a línea)
+        const statements=this.splitStatements(full);
+        for(let stmt of statements){
+          if(!stmt.trim()) continue;
+          try{ this.handleStatement(stmt.trim()); }catch(e){ this.print(this.escapeHtml(e.message), 'line error'); }
+        }
+        this.updateStatus();
+        return;
+      }
+    }
+
+    // No hay pendiente: verificar si es SQL que necesita ; y no lo tiene
+    const sqlNeedsSemi=/^(CREATE|INSERT|UPDATE|DELETE|SELECT|DROP|TRUNCATE|GRANT|REVOKE|BACKUP|ALTER)\b/i.test(cmd);
+    const isMetaNoSemi=/^(\\|help|clear|cls|history|status|neofetch|whoami|pwd|date|uname|ls|theme|color)\b/i.test(cmd);
+    if(sqlNeedsSemi && !isMetaNoSemi && !cmd.endsWith(';')){
+      this.pending=cmd;
+      this.isPending=true;
+      this.print(`<span style="color:var(--accent)">${this.escapeHtml(this.rm.currentDB)}=${sym}</span> ${this.escapeHtml(cmd)}`, 'line input');
+      this.print(`<span class="muted">... esperando ';' para ejecutar (sentencia incompleta, se une con espacio)</span>`, 'line muted');
+      this.updatePrompt();
+      return;
+    }
+
+    // Ejecución normal
     this.print(`<span style="color:var(--accent)">${this.escapeHtml(this.rm.currentDB)}=${sym}</span> ${this.escapeHtml(cmd)}`, 'line input');
     const statements=this.splitStatements(cmd);
     for(let stmt of statements){
@@ -935,6 +1070,7 @@ class Terminal{
     if(/^insert\s+into\s+/i.test(stmt)){ this.handleInsert(stmt); return; }
     if(/^update\s+/i.test(stmt)){ this.handleUpdate(stmt); return; }
     if(/^delete\s+from\s+/i.test(stmt) || /^delete\s+/i.test(stmt)){ this.handleDelete(stmt); return; }
+    if(/^alter\s+table\s+/i.test(stmt)){ this.handleAlterTable(stmt); return; }
     if(/^reassign\s+owned\s+by\s+/i.test(stmt)){ this.print('REASSIGN OWNED','line success'); return; }
     if(/^drop\s+owned\s+by\s+/i.test(stmt)){ this.print('DROP OWNED','line success'); return; }
 
@@ -1112,9 +1248,14 @@ class Terminal{
     }
     const t=tbls[k];
     let out=`                            Table "public.${t.nameOriginal}"\n`;
-    out+="  Column    |          Type          | Nullable | Owner\n";
-    out+="------------+------------------------+----------+--------\n";
-    t.columns.forEach(c=>{ out+=` ${c.name.padEnd(10)} | ${c.type.padEnd(22)} |          | ${t.owner}\n`;});
+    out+="  Column    |          Type          | Collation | Nullable | Default | Extra\n";
+    out+="------------+------------------------+-----------+----------+---------+-------\n";
+    t.columns.forEach(c=>{
+      const nullable=(c.notNull||c.primaryKey)? 'not null' : '';
+      const extra=[c.primaryKey?'PRIMARY KEY':'', c.unique?'UNIQUE':''].filter(Boolean).join(' ');
+      out+=` ${c.name.padEnd(10)} | ${c.type.padEnd(22)} |           | ${nullable.padEnd(8)} |         | ${extra}\n`;
+    });
+    out+=`Owner: ${t.owner}`;
     this.print(out);
   }
   handleCreateDatabase(stmt){
@@ -1132,14 +1273,22 @@ class Terminal{
   }
   handleCreateTable(stmt){
     const m=stmt.match(/create\s+table\s+(\w+)\s*\(([\s\S]+)\)\s*;?$/i);
-    if(!m) throw new Error('Sintaxis: CREATE TABLE <nombre> (col TIPO, ...)');
+    if(!m) throw new Error('Sintaxis: CREATE TABLE <nombre> (col TIPO [NOT NULL] [UNIQUE] [PRIMARY KEY], ...)');
     const tableName=m[1];
     const colsDef=m[2];
     const colsRaw=this.splitCols(colsDef);
     const columns=colsRaw.map(c=>{
-      const cm=c.trim().match(/^([a-zA-Z_][a-zA-Z0-9_]*)\s+([a-zA-Z0-9_()]+)/);
+      const colStr=c.trim();
+      // Nombre y tipo + resto de constraints
+      const cm=colStr.match(/^([a-zA-Z_][a-zA-Z0-9_]*)\s+([a-zA-Z0-9_()]+)(.*)$/i);
       if(!cm) throw new Error(`Definición inválida: '${c}'`);
-      return {name:cm[1], type:cm[2].toUpperCase()};
+      const name=cm[1];
+      const type=cm[2].toUpperCase();
+      const rest=(cm[3]||'').toUpperCase();
+      const notNull=/NOT\s+NULL/.test(rest);
+      const unique=/\bUNIQUE\b/.test(rest);
+      const primaryKey=/PRIMARY\s+KEY/.test(rest);
+      return {name, type, notNull: notNull || primaryKey, unique: unique || primaryKey, primaryKey};
     });
     this.engine.createTable(tableName, columns, this.rm.currentRole);
     this.print(`CREATE TABLE`,'line success');
@@ -1171,6 +1320,45 @@ class Terminal{
     if(!m) throw new Error('Sintaxis: TRUNCATE TABLE <nombre>');
     this.engine.truncate(m[1], this.rm.currentRole);
     this.print(`TRUNCATE TABLE`,'line success');
+  }
+  handleAlterTable(stmt){
+    // ALTER TABLE tabla ADD COLUMN col TYPE [NOT NULL] [UNIQUE] [PRIMARY KEY]
+    let m=stmt.match(/^alter\s+table\s+(\w+)\s+add\s+column\s+([a-zA-Z_][a-zA-Z0-9_]*)\s+([a-zA-Z0-9_()]+)(.*)$/i);
+    if(m){
+      const table=m[1];
+      const colName=m[2];
+      const colType=m[3].toUpperCase();
+      const rest=(m[4]||'').toUpperCase();
+      const notNull=/NOT\s+NULL/.test(rest);
+      const unique=/\bUNIQUE\b/.test(rest);
+      const primaryKey=/PRIMARY\s+KEY/.test(rest);
+      const colDef={name:colName, type:colType, notNull: notNull||primaryKey, unique: unique||primaryKey, primaryKey};
+      this.engine.alterTableAddColumn(table, colDef, this.rm.currentRole);
+      this.print(`ALTER TABLE`,'line success');
+      return;
+    }
+    // ALTER TABLE tabla DROP COLUMN col
+    m=stmt.match(/^alter\s+table\s+(\w+)\s+drop\s+column\s+(\w+)\s*;?$/i);
+    if(m){
+      this.engine.alterTableDropColumn(m[1], m[2], this.rm.currentRole);
+      this.print(`ALTER TABLE`,'line success');
+      return;
+    }
+    // ALTER TABLE tabla RENAME TO new
+    m=stmt.match(/^alter\s+table\s+(\w+)\s+rename\s+to\s+(\w+)\s*;?$/i);
+    if(m){
+      this.engine.alterTableRename(m[1], m[2], this.rm.currentRole);
+      this.print(`ALTER TABLE`,'line success');
+      return;
+    }
+    // ALTER TABLE tabla RENAME COLUMN old TO new
+    m=stmt.match(/^alter\s+table\s+(\w+)\s+rename\s+column\s+(\w+)\s+to\s+(\w+)\s*;?$/i);
+    if(m){
+      this.engine.alterTableRenameColumn(m[1], m[2], m[3], this.rm.currentRole);
+      this.print(`ALTER TABLE`,'line success');
+      return;
+    }
+    throw new Error(`ERROR:  sintaxis ALTER TABLE no reconocida. Usa: ALTER TABLE t ADD COLUMN c TYPE [NOT NULL] [UNIQUE]; | ALTER TABLE t DROP COLUMN c; | ALTER TABLE t RENAME TO new; | ALTER TABLE t RENAME COLUMN old TO new;`);
   }
   handleDescribe(stmt){
     const m=stmt.match(/(?:describe|desc|show\s+columns\s+from)\s+(\w+)\s*;?$/i);
