@@ -787,9 +787,9 @@ class Terminal{
     this.histIndex=-1;
     const sym=this.rm.isSuperUser(this.rm.currentRole)? '#': '>';
 
-    // Si hay sentencia pendiente (sin ;), concatenar con espacio
+    // Si hay sentencia pendiente (sin ;), concatenar con espacio (sin mensaje extra)
     if(this.pending){
-      this.print(`<span style="color:var(--accent)">${this.escapeHtml(this.rm.currentDB)}-${sym}</span> ${this.escapeHtml(cmd)}`, 'line muted');
+      this.print(`<span style="color:var(--accent)">${this.escapeHtml(this.rm.currentDB)}-${sym}</span> ${this.escapeHtml(cmd)}`, 'line input');
       this.pending += ' ' + cmd;
       if(!this.pending.trim().endsWith(';')){
         this.isPending=true;
@@ -818,7 +818,6 @@ class Terminal{
       this.pending=cmd;
       this.isPending=true;
       this.print(`<span style="color:var(--accent)">${this.escapeHtml(this.rm.currentDB)}=${sym}</span> ${this.escapeHtml(cmd)}`, 'line input');
-      this.print(`<span class="muted">... esperando ';' para ejecutar (sentencia incompleta, se une con espacio)</span>`, 'line muted');
       this.updatePrompt();
       return;
     }
