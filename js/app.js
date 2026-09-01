@@ -769,15 +769,16 @@ class Terminal{
   clear(){ this.outputEl.innerHTML=''; }
   escapeHtml(s){ return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
   printWelcome(){
-    this.print(`<span style="color:var(--accent)"> █████╗ ██╗     ███╗   ███╗ █████╗</span> <b>psql 16.3 — AlmaLinux Emulator v4.0</b>`, 'line');
-    this.print(`<span style="color:var(--accent)">██╔══██╗██║     ████╗ ████║██╔══██╗</span> <span class="muted">RF-02 Prompt dinámico • RF-07 Privilegios estrictos • RF-09 BACKUP</span>`, 'line');
-    this.print(`<span style="color:var(--accent)">███████║██║     ██╔████╔██║███████║</span> <span class="muted">LDD: CREATE+USAGE | LMD: SELECT/INSERT/UPDATE/DELETE por separado | 42501</span>`, 'line');
+    this.print(`<span style="color:var(--accent)">██████╗ ██████╗  ██╗██╗</span>`, 'line');
+    this.print(`<span style="color:var(--accent)">██╔══██╗██╔══██╗ ██║██║</span>`, 'line');
+    this.print(`<span style="color:var(--accent)">██████╔╝██║  ██║ ██║██║</span>`, 'line');
+    this.print(`<span style="color:var(--accent)">██╔══██╗██║  ██║ ██║██║</span>`, 'line');
+    this.print(`<span style="color:var(--accent)">██████╔╝██████╔╝ ██║██║</span>`, 'line');
+    this.print(`<span style="color:var(--accent)">╚═════╝ ╚═════╝  ╚═╝╚═╝</span>`, 'line');
     this.print(``, 'line');
     this.print(`<span class="muted">psql (16.3, server 15.7) — Escriba \\q para salir</span>`, 'line muted');
     const sym=this.rm.isSuperUser(this.rm.currentRole)? '#': '>';
-    this.print(`Conectado como <b style="color:var(--accent)">${this.rm.currentRole}</b> a <b style="color:var(--accent2)">${this.rm.currentDB}</b> — prompt: <b>${this.rm.currentDB}=${sym}</b> — Escribe <b style="color:var(--accent)">help</b> o <b style="color:var(--accent)">\\l</b>`, 'line system');
-    this.print(`<span class="muted">RF-09: BACKUP DATABASE compras;  genera dump CREATE TABLE + INSERT</span>`, 'line muted');
-    this.print(``, 'line');
+   
   }
   exec(raw){
     let cmd=raw.trim();
@@ -1089,7 +1090,7 @@ class Terminal{
 <b style="color:var(--accent2)">PERMISOS DDL</b>  GRANT USAGE/CREATE ON SCHEMA public TO rol  → valida CREATE TABLE
 <b style="color:var(--accent2)">PERMISOS LMD</b>  GRANT SELECT/INSERT/UPDATE/DELETE ON ALL TABLES IN SCHEMA public TO rol
 <b style="color:var(--accent2)">VALIDACIÓN</b>  SELECT requiere SELECT+USAGE | INSERT requiere INSERT+USAGE | CREATE TABLE requiere CREATE+USAGE
-<b style="color:var(--accent2)">REVOKE</b>  REVOKE SELECT ON ALL TABLES IN SCHEMA public FROM rol  (ahora sí funciona)
+<b style="color:var(--accent2)">REVOKE</b>  REVOKE SELECT ON ALL TABLES IN SCHEMA public FROM rol  
 <b style="color:var(--warning)">EJEMPLO FIX:</b> Si das solo SELECT, INSERT fallará con 42501 y CREATE TABLE fallará con 42501
 </div>`;
     this.print(h,'line');
