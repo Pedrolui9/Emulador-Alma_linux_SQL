@@ -910,9 +910,9 @@ class Terminal{
       }
     }
 
-    // No hay pendiente: verificar si necesita ; - ahora TODO necesita ; excepto whitelist corta (como en AlmaLinux)
-    // Whitelist que NO necesita ; : help, clear, status, etc y \q (salida). \c, \l, \dt, \d, \du sí necesitan ; como pide el usuario
-    const isNoSemiWhitelist=/^(help|clear|cls|history|status|neofetch|whoami|pwd|date|uname|ls|theme|color|\\tema|\\color|\\acciones|\\ayuda|\\teoria|\\q|quit|exit|salir)(\s|;|$)/i.test(cmd);
+    // No hay pendiente: verificar si necesita ; - bash NO necesita ;, psql/SQL SÍ (como en AlmaLinux real)
+    // Whitelist bash/linux que entra sin ; : help, clear, status, neofetch, whoami, pwd, date, uname, ls, echo, history, theme/color y paneles
+    const isNoSemiWhitelist=/^(help|clear|cls|history|status|neofetch|whoami|pwd|date|uname|ls|echo|theme|color|\\tema|\\color|\\acciones|\\ayuda|\\teoria|\\proyecto|\\q|quit|exit|salir)(\s|;|$)/i.test(cmd);
     if(!isNoSemiWhitelist && !cmd.endsWith(';')){
       this.pending=cmd;
       this.isPending=true;

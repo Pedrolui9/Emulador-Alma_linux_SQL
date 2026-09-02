@@ -182,20 +182,31 @@
       <table>
         <thead><tr><th>Comando</th><th>Función</th></tr></thead>
         <tbody>
-          <tr><td><code>CREATE ROLE dev NOLOGIN;</code> / <code>CREATE USER ana WITH PASSWORD '123';</code></td><td>Crear grupo / usuario (solo superuser)</td></tr>
-          <tr><td><code>GRANT rol TO usuario;</code> / <code>REVOKE rol FROM usuario;</code></td><td>Membresía</td></tr>
-          <tr><td><code>GRANT CONNECT ON DATABASE db TO rol;</code></td><td>Permiso conexión</td></tr>
-          <tr><td><code>GRANT USAGE ON SCHEMA public TO rol;</code> / <code>GRANT CREATE ON SCHEMA public TO rol;</code></td><td>Uso y creación en esquema</td></tr>
-          <tr><td><code>GRANT SELECT,INSERT ON ALL TABLES IN SCHEMA public TO rol;</code> / <code>REVOKE ... FROM rol;</code></td><td>Privilegios de tabla</td></tr>
-          <tr><td><code>SET ROLE ana;</code> / <code>RESET ROLE;</code> / <code>\du</code> / <code>SELECT * FROM pg_roles;</code></td><td>Cambio de rol y listado</td></tr>
-          <tr><td><code>REASSIGN OWNED BY viejo TO postgres;</code> / <code>DROP OWNED BY viejo;</code></td><td>Reasignar/borrar objetos antes de <code>DROP ROLE</code></td></tr>
-          <tr><td><code>DROP ROLE r;</code> / <code>DROP USER u;</code></td><td>Borrar rol (exige <code>REASSIGN</code>+<code>DROP OWNED</code>+<code>REVOKE</code> si tiene privilegios)</td></tr>
-          <tr><td><code>BACKUP DATABASE db;</code></td><td>Dump <code>CREATE TABLE + INSERT</code> (solo superuser)</td></tr>
+          <tr><td><code>GRANT rol TO usuario;</code> / <code>REVOKE rol FROM usuario;</code></td><td>Membresía (solo superuser)</td></tr>
+          <tr><td><code>GRANT CONNECT ON DATABASE db TO rol;</code></td><td>Permiso conexión (superuser)</td></tr>
+          <tr><td><code>GRANT USAGE ON SCHEMA public TO rol;</code> / <code>GRANT CREATE ON SCHEMA public TO rol;</code></td><td>Uso y creación en esquema (superuser)</td></tr>
+          <tr><td><code>GRANT SELECT,INSERT ON ALL TABLES IN SCHEMA public TO rol;</code> / <code>REVOKE ... FROM rol;</code></td><td>Privilegios de tabla (superuser)</td></tr>
+          <tr><td><code>REASSIGN OWNED BY viejo TO postgres;</code> / <code>DROP OWNED BY viejo;</code></td><td>Reasignar/borrar objetos antes de <code>DROP ROLE</code> (superuser)</td></tr>
           <tr><td><code>SELECT version();</code> / <code>status</code> / <code>\l</code> / <code>\c db;</code></td><td>Info y navegación</td></tr>
         </tbody>
       </table>
 
-      <h3>8. Comandos — Bash/Linux del emulador</h3>
+      <h3>7b. Comandos — Superusuario (solo <code>postgres</code>)</h3>
+      <table>
+        <thead><tr><th>Comando</th><th>Función</th><th>Sin <code>;</code> ?</th></tr></thead>
+        <tbody>
+          <tr><td><code>CREATE DATABASE ventas;</code></td><td>Crear BD</td><td>requiere <code>;</code></td></tr>
+          <tr><td><code>DROP DATABASE ventas;</code></td><td>Eliminar BD</td><td>requiere <code>;</code></td></tr>
+          <tr><td><code>CREATE ROLE rol_ventas NOLOGIN;</code></td><td>Crear rol grupo</td><td>requiere <code>;</code></td></tr>
+          <tr><td><code>CREATE USER ana WITH PASSWORD '123';</code></td><td>Crear usuario login</td><td>requiere <code>;</code></td></tr>
+          <tr><td><code>DROP ROLE rol_ventas;</code> / <code>DROP USER ana;</code></td><td>Borrar rol/usuario (exige <code>REASSIGN+DROP OWNED+REVOKE</code> si tiene privilegios)</td><td>requiere <code>;</code></td></tr>
+          <tr><td><code>GRANT ... TO rol;</code> / <code>REVOKE ... FROM rol;</code></td><td>Dar/quitar privilegios</td><td>requiere <code>;</code></td></tr>
+          <tr><td><code>SET ROLE ana;</code> / <code>RESET ROLE;</code></td><td>Cambiar de usuario / volver a postgres</td><td>requiere <code>;</code></td></tr>
+          <tr><td><code>BACKUP DATABASE ventas;</code></td><td>Dump <code>CREATE TABLE + INSERT</code></td><td>requiere <code>;</code> (solo superuser)</td></tr>
+        </tbody>
+      </table>
+
+      <h3>8. Comandos — Bash/Linux del emulador (sin <code>;</code>)</h3>
       <table>
         <thead><tr><th>Comando</th><th>Función</th></tr></thead>
         <tbody>
@@ -210,7 +221,8 @@
         </tbody>
       </table>
       <div class="resumen">
-        <b>Nota académica:</b> Todos los comandos exigen <code>;</code> al final (excepto whitelist corta: <code>help, clear, \q</code>). Sin <code>;</code> el prompt cambia a <code>compras-#</code> y une con espacio hasta cerrar, como en psql real.
+        <b>Nota académica:</b> <b>Bash/Linux</b> (<code>clear, ls, pwd, whoami, date, uname -a, echo, history, status, neofetch, \tema, \color, \acciones, \ayuda, \teoria, \proyecto, \q, help</code>) entran <b>sin <code>;</code></b> y ejecutan al instante.<br>
+        <b>psql/SQL</b> (<code>CREATE/DROP/ALTER, SELECT/INSERT/UPDATE/DELETE, GRANT/REVOKE, SET ROLE, \c, \l, \dt, \d, \du, BACKUP</code>) <b>requieren <code>;</code></b> para ejecutar; sin <code>;</code> el prompt cambia a <code>compras-#</code> y une con espacio hasta cerrar, como en AlmaLinux real.
       </div>
     </div>
 
