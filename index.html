@@ -58,6 +58,7 @@
       <span class="input-hint">Enter o Ejecutar • <code>\ayuda</code> para comandos</span>
       <span class="input-right">
         <button class="help-btn" id="btnHelpMini">Ayuda</button>
+        <button class="proyecto-btn" id="btnProyectoMini" style="background:var(--accent);color:var(--bg);border:none;padding:6px 10px;border-radius:6px;cursor:pointer;font-size:11px;font-weight:600">Proyecto</button>
         <button class="teoria-btn" id="btnTeoriaMini">Teoría</button>
       </span>
     </div>
@@ -108,6 +109,111 @@
       </ul>
     </div>
   
+    <div id="proyecto-panel">
+      <h2>◆ Proyecto Emulador psql — AlmaLinux 9.4</h2>
+      <p style="color:var(--fg-dim);font-size:12px;margin-bottom:12px">Emulador 100% offline de consola PostgreSQL 16.3 sobre AlmaLinux, desarrollado como trabajo académico para practicar administración de bases de datos, roles y permisos sin necesidad de instalar PostgreSQL ni AlmaLinux real.</p>
+
+      <h3>1. Lenguajes y Tecnologías</h3>
+      <table>
+        <thead><tr><th>Tecnología</th><th>Uso</th><th>Detalle</th></tr></thead>
+        <tbody>
+          <tr><td><code>HTML5</code></td><td>Estructura</td><td>Ventana tipo terminal, prompt, paneles, statusbar. Sin dependencias externas.</td></tr>
+          <tr><td><code>CSS3</code> (vanilla)</td><td>Estilo AlmaLinux</td><td>Variables CSS para 8 temas (alma/hacker/light/dracula...), layout 100dvh, responsive Android/Tablet, prompt fijo abajo, esquina sesión, tablas.</td></tr>
+          <tr><td><code>JavaScript ES6</code> (vanilla)</td><td>Motor</td><td>Clases <code>RoleManager</code> + <code>DatabaseEngine</code> + <code>Terminal</code>. Sin frameworks, sin CDNs, sin backend.</td></tr>
+          <tr><td><code>localStorage</code></td><td>Persistencia</td><td>Guarda BDs, tablas, filas, roles, privilegios, owner, REASSIGN/DROP. Persiste en sesión (RF-15).</td></tr>
+          <tr><td><code>Git</code></td><td>Versiones</td><td>Repo privado <code>emulador-psql-almalinux</code> en GitHub.</td></tr>
+        </tbody>
+      </table>
+
+      <h3>2. Explicación por Bloques</h3>
+      <table>
+        <thead><tr><th>Bloque</th><th>Archivo</th><th>Función</th></tr></thead>
+        <tbody>
+          <tr><td><b>RoleManager</b></td><td><code>js/app.js:6</code></td><td>Crea roles <code>NOLOGIN</code> (grupo) y <code>USER</code> (login), membresía <code>GRANT rol TO user</code>, privilegios por nivel: <code>CONNECT</code> (DB), <code>USAGE/CREATE</code> (schema), <code>SELECT/INSERT/UPDATE/DELETE</code> (tabla/ALL TABLES), herencia por membresía, <code>REASSIGN/DROP OWNED</code>, validación <code>hasAnyPrivilege</code>, <code>isSuperUser</code>.</td></tr>
+          <tr><td><b>DatabaseEngine</b></td><td><code>js/app.js:322</code></td><td>BDs en memoria <code>{databases:{tablas:{columnas,filas,owner}}}</code>, <code>CREATE/DROP DATABASE</code>, <code>CREATE/DROP/TRUNCATE/ALTER TABLE</code> (ADD/DROP/RENAME), <code>INSERT/SELECT/UPDATE/DELETE</code> con validación <code>NOT NULL 23502</code> y <code>UNIQUE 23505</code>, <code>BACKUP DATABASE</code> solo superuser, <code>reassignOwnedBy/dropOwnedBy/ownsObjects</code>.</td></tr>
+          <tr><td><b>Terminal</b></td><td><code>js/app.js:560</code></td><td>Prompt dinámico <code>postgres=#</code> / <code>compras=> (</code>-#` si falta <code>;</code>), buffer multilínea (une con espacio hasta <code>;</code>), historial <code>↑↓</code>, autocompletado <code>Tab</code>, <code>handleStatement</code> con regex para cada comando, colores de error <code>42501</code>/<code>23502</code>/<code>23505</code>, scroll automático, <code>printTable</code>.</td></tr>
+          <tr><td><b>UI</b></td><td><code>index.html / style.css</code></td><td>Topbar AlmaLinux, <code>window-bar</code> 80x24, terminal flexible, <code>prompt-bar</code> fijo abajo (info sube), esquina <code>#cornerSession</code>, <code>statusbar</code>, paneles <code>#help-panel</code>/<code>#teoria-panel</code>/<code>#proyecto-panel</code>, responsive <code>@media 768px/480px</code>.</td></tr>
+        </tbody>
+      </table>
+
+      <h3>3. Finalidad</h3>
+      <ul>
+        <li>Simular AlmaLinux + psql sin instalar nada, 100% offline, para aulas sin internet o con PCs limitadas.</li>
+        <li>Enseñar diferencia <b>LDD vs LMD</b> y por qué un rol con solo <code>SELECT</code> no puede hacer <code>INSERT</code> ni <code>CREATE TABLE</code>.</li>
+        <li>Practicar ciclo de vida de roles: <code>CREATE → GRANT → SET ROLE → REASSIGN OWNED → DROP OWNED → REVOKE → DROP</code> con mensajes reales.</li>
+        <li>Validar diseño de tablas con <code>NOT NULL / UNIQUE / PRIMARY KEY</code> y errores <code>23502/23505</code>.</li>
+      </ul>
+
+      <h3>4. Uso Académico</h3>
+      <ul>
+        <li><b>Unidad III - Administración</b>: crear 2 roles grupo (<code>desarrolladores, soporte</code>), 1 usuario (<code>salmada</code>), otorgar <code>CONNECT/USAGE/CREATE/SELECT</code> y probar que <code>salmada</code> sin <code>INSERT</code> falla.</li>
+        <li><b>Laboratorio</b>: cada alumno abre <code>index.html</code> local, no necesita servidor; el docente revisa con <code>status</code> y <code>\du</code>.</li>
+        <li><b>Evaluación</b>: pedir entrega de <code>BACKUP DATABASE compras;</code> (.sql generado) y capturas de errores 42501.</li>
+        <li><b>Tarea</b>: diseñar tabla con <code>UNIQUE/NOT NULL</code>, probar duplicados y nulos, y usar <code>ALTER TABLE</code> para corregir.</li>
+      </ul>
+
+      <h3>5. Comandos — DDL (Definición)</h3>
+      <table>
+        <thead><tr><th>Comando</th><th>Función</th><th>Privilegio</th></tr></thead>
+        <tbody>
+          <tr><td><code>CREATE DATABASE nombre;</code></td><td>Crea BD</td><td>superuser</td></tr>
+          <tr><td><code>CREATE TABLE t (id INT PRIMARY KEY, email VARCHAR(100) UNIQUE NOT NULL);</code></td><td>Crea tabla con restricciones</td><td><code>CREATE+USAGE</code> en public</td></tr>
+          <tr><td><code>DROP TABLE t;</code> / <code>TRUNCATE TABLE t;</code></td><td>Borra/vacía tabla</td><td>owner o superuser / <code>DELETE</code></td></tr>
+          <tr><td><code>ALTER TABLE t ADD COLUMN edad INT NOT NULL;</code></td><td>Añade columna</td><td><code>CREATE+USAGE</code> + owner</td></tr>
+          <tr><td><code>ALTER TABLE t DROP COLUMN edad;</code></td><td>Elimina columna</td><td>owner</td></tr>
+          <tr><td><code>ALTER TABLE t RENAME TO nuevo;</code></td><td>Renombra tabla</td><td>owner</td></tr>
+          <tr><td><code>ALTER TABLE t RENAME COLUMN a TO b;</code></td><td>Renombra columna</td><td>owner</td></tr>
+          <tr><td><code>\dt</code> / <code>\d t</code></td><td>Listar / describir</td><td><code>USAGE</code></td></tr>
+        </tbody>
+      </table>
+
+      <h3>6. Comandos — LMD (Manipulación)</h3>
+      <table>
+        <thead><tr><th>Comando</th><th>Función</th><th>Privilegio</th></tr></thead>
+        <tbody>
+          <tr><td><code>INSERT INTO t VALUES (1,'a');</code> / <code>INSERT INTO t (id) VALUES (1);</code></td><td>Alta</td><td><code>INSERT+USAGE</code>, valida <code>NOT NULL/UNIQUE</code></td></tr>
+          <tr><td><code>SELECT * FROM t WHERE id=1 ORDER BY id LIMIT 10;</code></td><td>Consulta</td><td><code>SELECT+USAGE</code></td></tr>
+          <tr><td><code>UPDATE t SET des='X' WHERE id=1;</code></td><td>Modificación</td><td><code>UPDATE+USAGE</code>, valida <code>UNIQUE</code></td></tr>
+          <tr><td><code>DELETE FROM t WHERE id=1;</code> / <code>DELETE FROM t;</code></td><td>Baja</td><td><code>DELETE+USAGE</code></td></tr>
+        </tbody>
+      </table>
+
+      <h3>7. Comandos — Roles, Privilegios y Sistema</h3>
+      <table>
+        <thead><tr><th>Comando</th><th>Función</th></tr></thead>
+        <tbody>
+          <tr><td><code>CREATE ROLE dev NOLOGIN;</code> / <code>CREATE USER ana WITH PASSWORD '123';</code></td><td>Crear grupo / usuario (solo superuser)</td></tr>
+          <tr><td><code>GRANT rol TO usuario;</code> / <code>REVOKE rol FROM usuario;</code></td><td>Membresía</td></tr>
+          <tr><td><code>GRANT CONNECT ON DATABASE db TO rol;</code></td><td>Permiso conexión</td></tr>
+          <tr><td><code>GRANT USAGE ON SCHEMA public TO rol;</code> / <code>GRANT CREATE ON SCHEMA public TO rol;</code></td><td>Uso y creación en esquema</td></tr>
+          <tr><td><code>GRANT SELECT,INSERT ON ALL TABLES IN SCHEMA public TO rol;</code> / <code>REVOKE ... FROM rol;</code></td><td>Privilegios de tabla</td></tr>
+          <tr><td><code>SET ROLE ana;</code> / <code>RESET ROLE;</code> / <code>\du</code> / <code>SELECT * FROM pg_roles;</code></td><td>Cambio de rol y listado</td></tr>
+          <tr><td><code>REASSIGN OWNED BY viejo TO postgres;</code> / <code>DROP OWNED BY viejo;</code></td><td>Reasignar/borrar objetos antes de <code>DROP ROLE</code></td></tr>
+          <tr><td><code>DROP ROLE r;</code> / <code>DROP USER u;</code></td><td>Borrar rol (exige <code>REASSIGN</code>+<code>DROP OWNED</code>+<code>REVOKE</code> si tiene privilegios)</td></tr>
+          <tr><td><code>BACKUP DATABASE db;</code></td><td>Dump <code>CREATE TABLE + INSERT</code> (solo superuser)</td></tr>
+          <tr><td><code>SELECT version();</code> / <code>status</code> / <code>\l</code> / <code>\c db;</code></td><td>Info y navegación</td></tr>
+        </tbody>
+      </table>
+
+      <h3>8. Comandos — Bash/Linux del emulador</h3>
+      <table>
+        <thead><tr><th>Comando</th><th>Función</th></tr></thead>
+        <tbody>
+          <tr><td><code>clear</code> / <code>cls</code> / <code>Ctrl+L</code></td><td>Limpiar pantalla</td></tr>
+          <tr><td><code>history</code> / <code>↑↓</code></td><td>Historial</td></tr>
+          <tr><td><code>whoami</code> / <code>pwd</code> / <code>date</code> / <code>uname -a</code> / <code>ls</code></td><td>Info sistema emulado AlmaLinux</td></tr>
+          <tr><td><code>echo texto</code></td><td>Imprimir</td></tr>
+          <tr><td><code>neofetch</code></td><td>Banner AlmaLinux + psql</td></tr>
+          <tr><td><code>\tema</code> / <code>\tema set hacker</code> / <code>theme set ...</code></td><td>Cambiar tema (8)</td></tr>
+          <tr><td><code>\color bg #000 fg #0f0</code> / <code>\color reset</code></td><td>Colores personalizados</td></tr>
+          <tr><td><code>\acciones</code> / <code>\ayuda</code> / <code>\teoria</code> / <code>\q</code></td><td>Paneles y salida</td></tr>
+        </tbody>
+      </table>
+      <div class="resumen">
+        <b>Nota académica:</b> Todos los comandos exigen <code>;</code> al final (excepto whitelist corta: <code>help, clear, \q</code>). Sin <code>;</code> el prompt cambia a <code>compras-#</code> y une con espacio hasta cerrar, como en psql real.
+      </div>
+    </div>
+
     <div id="teoria-panel">
       <h2>Roles, Usuarios y Permisos — Validación estricta</h2>
       <div class="callout-error">

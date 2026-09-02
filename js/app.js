@@ -943,7 +943,7 @@ class Terminal{
   }
   autocomplete(){
     const val=this.inputEl.value.toLowerCase();
-    const candidates=['\\l','\\dt','\\d ','\\du','\\c ','\\ayuda','\\acciones','\\tema','\\color','SELECT * FROM ','INSERT INTO ','UPDATE ','DELETE FROM ','CREATE TABLE ','CREATE DATABASE ','CREATE ROLE ','CREATE USER ','GRANT ','REVOKE ','SET ROLE ','RESET ROLE','DROP TABLE ','DROP DATABASE ','help','clear','status','neofetch','theme list','theme set '];
+    const candidates=['\\l','\\dt','\\d ','\\du','\\c ','\\ayuda','\\teoria','\\proyecto','\\acciones','\\tema','\\color','SELECT * FROM ','INSERT INTO ','UPDATE ','DELETE FROM ','CREATE TABLE ','CREATE DATABASE ','CREATE ROLE ','CREATE USER ','GRANT ','REVOKE ','SET ROLE ','RESET ROLE','DROP TABLE ','DROP DATABASE ','help','clear','status','neofetch','theme list','theme set '];
     const m=candidates.find(c=>c.toLowerCase().startsWith(val));
     if(m) this.inputEl.value=m;
   }
@@ -1015,8 +1015,9 @@ class Terminal{
     if(low.startsWith('\\tema')){ this.handleTema(stmt); return; }
     if(low.startsWith('\\color')){ this.handleColor(stmt); return; }
     if(low==='\\acciones' || low==='\\acciones;' || low.startsWith('\\acciones ')){ this.handleAcciones(); return; }
-    if(low==='\\ayuda' || low==='\\ayuda;'){ this.showHelp(); return; }
-    if(low==='\\teoria' || low==='\\teoria;'){ const p=document.getElementById('teoria-panel'); document.getElementById('help-panel').style.display='none'; p.style.display=p.style.display==='block'?'none':'block'; if(p.style.display==='block') this.print('<span class="muted">Panel Teoría mostrado — \\teoria para ocultar</span>','line muted'); return; }
+    if(low==='\\ayuda' || low==='\\ayuda;'){ const p=document.getElementById('help-panel'); document.getElementById('teoria-panel').style.display='none'; document.getElementById('proyecto-panel').style.display='none'; p.style.display=p.style.display==='block'?'none':'block'; if(p.style.display==='block') this.print('<span class="muted">Panel Ayuda mostrado — \\ayuda para ocultar</span>','line muted'); return; }
+    if(low==='\\teoria' || low==='\\teoria;'){ const p=document.getElementById('teoria-panel'); document.getElementById('help-panel').style.display='none'; document.getElementById('proyecto-panel').style.display='none'; p.style.display=p.style.display==='block'?'none':'block'; if(p.style.display==='block') this.print('<span class="muted">Panel Teoría mostrado — \\teoria para ocultar</span>','line muted'); return; }
+    if(low==='\\proyecto' || low==='\\proyecto;' || low.startsWith('\\proyecto ')){ const p=document.getElementById('proyecto-panel'); document.getElementById('help-panel').style.display='none'; document.getElementById('teoria-panel').style.display='none'; p.style.display=p.style.display==='block'?'none':'block'; if(p.style.display==='block') this.print('<span class="muted">Panel Proyecto mostrado — \\proyecto para ocultar</span>','line muted'); return; }
     if(low.startsWith('theme')){ this.handleTheme(stmt); return; }
     if(low.startsWith('color')){ this.handleColorLegacy(stmt); return; }
 
@@ -1704,12 +1705,22 @@ const btnHelp=document.getElementById('btnHelp');
 if(btnHelp) btnHelp.addEventListener('click', ()=>{
   const p=document.getElementById('help-panel');
   document.getElementById('teoria-panel').style.display='none';
+  const pp=document.getElementById('proyecto-panel'); if(pp) pp.style.display='none';
   p.style.display=p.style.display==='block'?'none':'block';
 });
 const btnTeoria=document.getElementById('btnTeoria');
 if(btnTeoria) btnTeoria.addEventListener('click', ()=>{
   const p=document.getElementById('teoria-panel');
   document.getElementById('help-panel').style.display='none';
+  const pp=document.getElementById('proyecto-panel'); if(pp) pp.style.display='none';
+  p.style.display=p.style.display==='block'?'none':'block';
+});
+const btnProyecto=document.getElementById('proyecto-panel');
+const btnProyectoBtn=document.getElementById('btnProyecto');
+if(btnProyectoBtn) btnProyectoBtn.addEventListener('click', ()=>{
+  const p=document.getElementById('proyecto-panel');
+  document.getElementById('help-panel').style.display='none';
+  document.getElementById('teoria-panel').style.display='none';
   p.style.display=p.style.display==='block'?'none':'block';
 });
 // Nuevos botones input-area (sin sidebar)
@@ -1717,6 +1728,8 @@ const btnEj=document.getElementById('btnEjecutar');
 if(btnEj) btnEj.addEventListener('click', ()=>{ term.exec(document.getElementById('cmdInput').value); document.getElementById('cmdInput').value=''; document.getElementById('cmdInput').focus(); });
 const btnHelpMini=document.getElementById('btnHelpMini');
 if(btnHelpMini) btnHelpMini.addEventListener('click', ()=> term.exec('\\ayuda'));
+const btnProyectoMini=document.getElementById('btnProyectoMini');
+if(btnProyectoMini) btnProyectoMini.addEventListener('click', ()=> term.exec('\\proyecto'));
 const btnTeoriaMini=document.getElementById('btnTeoriaMini');
 if(btnTeoriaMini) btnTeoriaMini.addEventListener('click', ()=> term.exec('\\teoria'));
 function updClock(){ const n=new Date(); document.getElementById('clock').textContent=n.toLocaleString('es-PY',{weekday:'short',hour:'2-digit',minute:'2-digit',second:'2-digit'}); }
