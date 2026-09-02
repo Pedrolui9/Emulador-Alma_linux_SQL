@@ -8,6 +8,8 @@ class RoleManager{
     this.roles={}; // name_lower -> {nameOriginal, canLogin, superuser, members:Set}
     this.privs={}; // name_lower -> { db:{db: Set}, schema:{'db.schema':Set}, allTables:{'db.schema':Set}, table:{'db.schema.table':Set} }
     this.membership={}; // user_lower -> Set(group_lower)
+    this.reassignedDone={}; // track REASSIGN OWNED BY para validación
+    this.dropOwnedDone={}; // track DROP OWNED BY
     this.loadSeed();
   }
   loadSeed(){
@@ -35,6 +37,8 @@ class RoleManager{
           for(let k in (obj.membership||{})){
             this.membership[k]=new Set(obj.membership[k]);
           }
+          this.reassignedDone=obj.reassignedDone||{};
+          this.dropOwnedDone=obj.dropOwnedDone||{};
           this.currentDB=obj.currentDB||'postgres';
           this.currentRole=obj.currentRole||'postgres';
           this.originalRole=obj.originalRole||'postgres';
@@ -42,6 +46,12 @@ class RoleManager{
         }
       }
     }catch(e){ console.warn('load fail',e)}
+    // seed
+    this.roles['postgres']={nameOriginal:'postgres', canLogin:true, superuser:true, members:new Set()};
+    this.privs['postgres']={db:{}, schema:{}, allTables:{}, table:{}};
+    this.membership['postgres']=new Set();
+    this.reassignedDone={};
+    this.dropOwnedDone={};
     // seed
     this.roles['postgres']={nameOriginal:'postgres', canLogin:true, superuser:true, members:new Set()};
     this.privs['postgres']={db:{}, schema:{}, allTables:{}, table:{}};
@@ -54,6 +64,8 @@ class RoleManager{
   save(extra){
     const toSave={
       roles:{}, privs:{}, membership:{},
+      reassignedDone: this.reassignedDone,
+      dropOwnedDone: this.dropOwnedDone,
       currentDB: (extra&&extra.currentDB!==undefined)? extra.currentDB : this.currentDB,
       currentRole: (extra&&extra.currentRole!==undefined)? extra.currentRole : this.currentRole,
       originalRole: this.originalRole,
@@ -100,21 +112,53 @@ class RoleManager{
     if(canLogin) this.membership[k]=new Set();
     this.save();
   }
+  hasAnyPrivilege(role){
+    const k=role.toLowerCase();
+    const p=this.privs[k];
+    if(!p) return false;
+    if(Object.keys(p.db).some(db=> p.db[db].size>0)) return true;
+    if(Object.keys(p.schema).some(s=> p.schema[s].size>0)) return true;
+    if(Object.keys(p.allTables).some(s=> p.allTables[s].size>0)) return true;
+    if(Object.keys(p.table).some(t=> p.table[t].size>0)) return true;
+    return false;
+  }
+  markReassigned(role){ this.reassignedDone[role.toLowerCase()]=true; this.save(); }
+  markDropOwned(role){ this.dropOwnedDone[role.toLowerCase()]=true; this.save(); }
+  clearReassignMarks(role){ delete this.reassignedDone[role.toLowerCase()]; delete this.dropOwnedDone[role.toLowerCase()]; }
   dropRole(name){
     const k=name.toLowerCase();
     if(!this.hasRole(k)) throw new Error(`ERROR:  no existe el rol «${name}»`);
     if(k==='postgres') throw new Error('ERROR:  no se puede eliminar el rol postgres');
-    // check members
     const r=this.roles[k];
-    if(r.members.size>0) throw new Error(`ERROR:  el rol "${name}" no puede ser eliminado porque tiene miembros. Haga REVOKE primero`);
-    // check if any user is member of this role
+    // Validación estricta: si tiene privilegios, debe hacer REASSIGN + DROP OWNED primero
+    const hasPriv=this.hasAnyPrivilege(k);
+    if(hasPriv && !this.reassignedDone[k]){
+      throw new Error(`ERROR:  el rol "${name}" tiene privilegios. Debe hacer REASSIGN OWNED BY ${name} TO postgres antes de DROP\nHINT:  REASSIGN OWNED BY ${name} TO postgres;`);
+    }
+    if(hasPriv && !this.dropOwnedDone[k]){
+      throw new Error(`ERROR:  el rol "${name}" tiene privilegios. Debe hacer DROP OWNED BY ${name} antes de DROP\nHINT:  DROP OWNED BY ${name};`);
+    }
+    // Si es miembro de un rol privilegiado, también debe REASSIGN primero (herencia)
+    const memberOfPrivileged = [...(this.membership[k]||[])].some(g=> this.hasAnyPrivilege(g));
+    if(memberOfPrivileged && !this.reassignedDone[k]){
+      throw new Error(`ERROR:  el usuario "${name}" es miembro de un rol con privilegios. Debe hacer REASSIGN OWNED BY ${name} TO postgres antes de DROP`);
+    }
+    // check members (si es grupo con miembros)
+    if(r.members.size>0) throw new Error(`ERROR:  el rol "${name}" no puede ser eliminado porque tiene miembros. Haga REVOKE ${name} FROM usuario primero`);
+    // check if any user is member of this role (si es grupo, alguien lo tiene)
     for(let user in this.membership){
       if(this.membership[user].has(k)) throw new Error(`ERROR:  el rol "${name}" no puede ser eliminado porque el usuario "${user}" es miembro. Haga REVOKE ${name} FROM ${user}`);
     }
-    // check ownership? simplified
+    // check if this role is still member of any group (si es usuario miembro)
+    if(this.membership[k] && this.membership[k].size>0){
+      const groups=[...this.membership[k]].join(', ');
+      throw new Error(`ERROR:  el rol "${name}" aún es miembro de ${groups}. Haga REVOKE ${groups} FROM ${name} primero`);
+    }
     delete this.roles[k];
     delete this.privs[k];
     delete this.membership[k];
+    delete this.reassignedDone[k];
+    delete this.dropOwnedDone[k];
     // remove from other memberships
     for(let u in this.membership) this.membership[u].delete(k);
     this.save();
@@ -138,13 +182,21 @@ class RoleManager{
     this.membership[u].delete(g);
     this.save();
   }
-  // privilege grants
+  clearPrivileges(role){
+    const k=role.toLowerCase();
+    if(this.privs[k]){
+      this.privs[k]={db:{}, schema:{}, allTables:{}, table:{}};
+      this.save();
+    }
+  }
+  // privilege grants - al otorgar nuevo privilegio, se invalida REASSIGN/DROP previo
   grantDbPriv(role, db, priv){
     this.ensurePrivEntry(role);
     const k=role.toLowerCase();
     const d=db.toLowerCase();
     if(!this.privs[k].db[d]) this.privs[k].db[d]=new Set();
     this.privs[k].db[d].add(priv.toUpperCase());
+    delete this.reassignedDone[k]; delete this.dropOwnedDone[k];
     this.save();
   }
   grantSchemaPriv(role, db, schema, priv){
@@ -153,6 +205,7 @@ class RoleManager{
     const key=`${db.toLowerCase()}.${schema.toLowerCase()}`;
     if(!this.privs[k].schema[key]) this.privs[k].schema[key]=new Set();
     this.privs[k].schema[key].add(priv.toUpperCase());
+    delete this.reassignedDone[k]; delete this.dropOwnedDone[k];
     this.save();
   }
   grantAllTablesPriv(role, db, schema, priv){
@@ -161,6 +214,7 @@ class RoleManager{
     const key=`${db.toLowerCase()}.${schema.toLowerCase()}`;
     if(!this.privs[k].allTables[key]) this.privs[k].allTables[key]=new Set();
     this.privs[k].allTables[key].add(priv.toUpperCase());
+    delete this.reassignedDone[k]; delete this.dropOwnedDone[k];
     this.save();
   }
   grantTablePriv(role, db, schema, table, priv){
@@ -169,6 +223,7 @@ class RoleManager{
     const key=`${db.toLowerCase()}.${schema.toLowerCase()}.${table.toLowerCase()}`;
     if(!this.privs[k].table[key]) this.privs[k].table[key]=new Set();
     this.privs[k].table[key].add(priv.toUpperCase());
+    delete this.reassignedDone[k]; delete this.dropOwnedDone[k];
     this.save();
   }
   revokeDbPriv(role, db, priv){
@@ -484,6 +539,49 @@ class DatabaseEngine{
     col.name=newCol;
     table.rows.forEach(r=>{ if(r[oldName]!==undefined){ r[newCol]=r[oldName]; delete r[oldName]; }});
     this.save();
+  }
+  reassignOwnedBy(oldRole, newRole){
+    const oldL=oldRole.toLowerCase(), newL=newRole.toLowerCase();
+    if(!this.rm.hasRole(oldRole)) throw new Error(`ERROR:  no existe el rol «${oldRole}»`);
+    if(!this.rm.hasRole(newRole)) throw new Error(`ERROR:  no existe el rol «${newRole}»`);
+    let count=0;
+    for(let db in this.databases){
+      for(let t in this.databases[db].tables){
+        if(this.databases[db].tables[t].owner===oldL){
+          this.databases[db].tables[t].owner=newL;
+          count++;
+        }
+      }
+    }
+    this.save();
+    return count;
+  }
+  dropOwnedBy(role){
+    const k=role.toLowerCase();
+    if(!this.rm.hasRole(role)) throw new Error(`ERROR:  no existe el rol «${role}»`);
+    // Eliminar tablas donde owner == role
+    let dropped=0;
+    for(let db in this.databases){
+      for(let t in this.databases[db].tables){
+        if(this.databases[db].tables[t].owner===k){
+          delete this.databases[db].tables[t];
+          dropped++;
+        }
+      }
+    }
+    // Limpiar privilegios del rol
+    this.rm.clearPrivileges(role);
+    this.save();
+    return dropped;
+  }
+  ownsObjects(role){
+    const k=role.toLowerCase();
+    for(let db in this.databases){
+      for(let t in this.databases[db].tables){
+        if(this.databases[db].tables[t].owner===k) return true;
+      }
+    }
+    return false;
   }
   describe(name){ return this.getTable(name); }
   insert(tableName, obj, actor){
@@ -1071,8 +1169,26 @@ class Terminal{
     if(/^update\s+/i.test(stmt)){ this.handleUpdate(stmt); return; }
     if(/^delete\s+from\s+/i.test(stmt) || /^delete\s+/i.test(stmt)){ this.handleDelete(stmt); return; }
     if(/^alter\s+table\s+/i.test(stmt)){ this.handleAlterTable(stmt); return; }
-    if(/^reassign\s+owned\s+by\s+/i.test(stmt)){ this.print('REASSIGN OWNED','line success'); return; }
-    if(/^drop\s+owned\s+by\s+/i.test(stmt)){ this.print('DROP OWNED','line success'); return; }
+    // REASSIGN OWNED BY old TO new;
+    m=stmt.match(/^reassign\s+owned\s+by\s+(\w+)\s+to\s+(\w+)\s*;?$/i); if(m){
+      if(!this.rm.isSuperUser(this.rm.currentRole)) throw new Error('ERROR:  debe ser superusuario para REASSIGN OWNED');
+      if(!this.rm.hasRole(m[1])) throw new Error(`ERROR:  no existe el rol «${m[1]}»`);
+      if(!this.rm.hasRole(m[2])) throw new Error(`ERROR:  no existe el rol «${m[2]}»`);
+      const cnt=this.engine.reassignOwnedBy(m[1], m[2]);
+      this.rm.markReassigned(m[1]);
+      this.print(`REASSIGN OWNED: ${cnt} objeto(s) reasignado(s) de ${m[1]} a ${m[2]}`, 'line success');
+      return;
+    }
+    // DROP OWNED BY role;
+    m=stmt.match(/^drop\s+owned\s+by\s+(\w+)\s*;?$/i); if(m){
+      if(!this.rm.isSuperUser(this.rm.currentRole)) throw new Error('ERROR:  debe ser superusuario para DROP OWNED');
+      if(!this.rm.hasRole(m[1])) throw new Error(`ERROR:  no existe el rol «${m[1]}»`);
+      const dropped=this.engine.dropOwnedBy(m[1]);
+      this.rm.markDropOwned(m[1]);
+      // Limpiar marcas de REASSIGN también para permitir DROP después
+      this.print(`DROP OWNED: ${dropped} objeto(s) eliminado(s) y privilegios revocados para ${m[1]}`, 'line success');
+      return;
+    }
 
     // RF-09 BACKUP DATABASE
     m=stmt.match(/^backup\s+database\s+(\w+)\s*;?$/i); if(m){ this.handleBackup(m[1]); return; }
