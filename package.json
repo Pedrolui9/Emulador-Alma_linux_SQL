@@ -1,0 +1,9 @@
+{
+  "name": "emulador-psql-almalinux",
+  "version": "3.0.0",
+  "description": "Emulador offline de psql 16.3 sobre AlmaLinux 9.4 - DDL/LMD validado",
+  "private": true,
+  "scripts": {
+    "test": "node tests/run-all.js"
+  }
+}

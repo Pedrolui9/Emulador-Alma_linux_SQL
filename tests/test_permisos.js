@@ -8,7 +8,9 @@ global.localStorage = {
 
 // Cargar app.js como texto y evalular clases (extraer sin DOM)
 const fs=require('fs');
-let code=fs.readFileSync('C:\\Users\\Pedro Insfran\\Desktop\\emulador\\js\\app.js','utf8');
+const path=require('path');
+const APP_JS=path.join(__dirname,'..','js','app.js');
+let code=fs.readFileSync(APP_JS,'utf8');
 // Cortar antes de // =============== INIT =============== (donde empieza DOM)
 let cutIndex=code.indexOf('// =============== INIT ===============');
 if(cutIndex>0) code=code.substring(0,cutIndex);
@@ -103,7 +105,8 @@ expectError('SELECT con USAGE pero sin SELECT debe fallar', ()=>{
 console.log('\n--- Dar SELECT ---');
 rm2.grantAllTablesPriv('rol_ventas','compras','public','SELECT');
 console.log('canSelect ahora?', rm2.canSelect('ventas','compras','public','cargos'));
-test('SELECT con SELECT+USAGE debe pasar', ()=>{
+test('SELECT con SELECT+USAGE debe pasar (en BD compras)', ()=>{
+  eng2.useDatabase('compras','ventas'); // con CONNECT USAGE SELECT debe poder conectar y leer
   eng2.select('cargos','*',null,null,null,'ventas');
 });
 expectError('INSERT con solo SELECT debe fallar', ()=>{

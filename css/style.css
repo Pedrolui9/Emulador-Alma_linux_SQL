@@ -241,6 +241,8 @@ table.db-table tr:hover td{background:var(--selection)}
 #help-panel h3, #teoria-panel h3, #proyecto-panel h3{ color:var(--accent); margin:14px 0 8px 0; font-size:13px; }
 #help-panel h3:first-child, #teoria-panel h2:first-child, #proyecto-panel h2:first-child{ margin-top:0; }
 #help-panel code, #teoria-panel code, #proyecto-panel code{ background:var(--bg); padding:2px 6px; border-radius:4px; color:var(--accent2); font-family:'Cascadia Code','Consolas','Courier New',monospace; font-size:12px; border:1px solid var(--border); }
+#help-panel li code.clickable{ cursor:pointer; text-decoration:dotted underline; text-decoration-color:var(--fg-dim); }
+#help-panel li code.clickable:hover{ border-color:var(--accent); color:var(--accent); background:var(--selection); text-decoration-color:var(--accent); }
 #help-panel ul, #teoria-panel ul, #proyecto-panel ul{ margin-left:18px; margin-top:6px; }
 #help-panel li, #teoria-panel li, #proyecto-panel li{ margin-bottom:5px; color:var(--fg-dim); }
 #help-panel li b, #teoria-panel li b, #proyecto-panel li b{ color:var(--fg); }

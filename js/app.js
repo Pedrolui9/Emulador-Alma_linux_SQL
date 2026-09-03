@@ -2,6 +2,21 @@
 const STORAGE_KEY='alma_psql_v3';
 const THEME_KEY='alma_theme_v1';
 
+// =============== ERROR SQL CENTRALIZADO ===============
+// Genera el mensaje de error con formato estándar psql para unificar el texto:
+//   ERROR:  <mensaje>
+//   DETAIL:  <detalle>      (opcional)
+//   HINT:  <pista>          (opcional)
+//   Estado SQL: <código>    (opcional, ej. 42501 / 23502 / 23505)
+function sqlError(message, opts={}){
+  const {detail, hint, sqlstate} = opts;
+  let m = 'ERROR:  ' + message;
+  if(detail) m += '\nDETAIL:  ' + detail;
+  if(hint) m += '\nHINT:  ' + hint;
+  if(sqlstate) m += '\nEstado SQL: ' + sqlstate;
+  return new Error(m);
+}
+
 // =============== ROLE MANAGER ===============
 class RoleManager{
   constructor(){
@@ -122,26 +137,34 @@ class RoleManager{
     if(Object.keys(p.table).some(t=> p.table[t].size>0)) return true;
     return false;
   }
+  // REASSIGN OWNED resuelve los objetos poseídos (no revoca privilegios GRANT).
   markReassigned(role){ this.reassignedDone[role.toLowerCase()]=true; this.save(); }
-  markDropOwned(role){ this.dropOwnedDone[role.toLowerCase()]=true; this.save(); }
+  // DROP OWNED elimina objetos Y revoca privilegios: resuelve ambas partes.
+  markDropOwned(role){
+    const k=role.toLowerCase();
+    this.reassignedDone[k]=true;
+    this.dropOwnedDone[k]=true;
+    this.save();
+  }
   clearReassignMarks(role){ delete this.reassignedDone[role.toLowerCase()]; delete this.dropOwnedDone[role.toLowerCase()]; }
   dropRole(name){
     const k=name.toLowerCase();
     if(!this.hasRole(k)) throw new Error(`ERROR:  no existe el rol «${name}»`);
     if(k==='postgres') throw new Error('ERROR:  no se puede eliminar el rol postgres');
     const r=this.roles[k];
-    // Validación estricta: si tiene privilegios, debe hacer REASSIGN + DROP OWNED primero
+    // Validación estricta y fiel a PostgreSQL:
+    //  - REASSIGN OWNED BY x TO y  ->  resuelve objetos poseídos.
+    //  - DROP OWNED BY x           ->  resuelve objetos poseídos Y revoca privilegios GRANT.
+    // Cualquiera de los dos (o ambos) desbloquea la parte de "objetos"; el DROP
+    // de un rol con privilegios GRANT exige DROP OWNED (lo único que los revoca).
     const hasPriv=this.hasAnyPrivilege(k);
-    if(hasPriv && !this.reassignedDone[k]){
-      throw new Error(`ERROR:  el rol "${name}" tiene privilegios. Debe hacer REASSIGN OWNED BY ${name} TO postgres antes de DROP\nHINT:  REASSIGN OWNED BY ${name} TO postgres;`);
-    }
     if(hasPriv && !this.dropOwnedDone[k]){
       throw new Error(`ERROR:  el rol "${name}" tiene privilegios. Debe hacer DROP OWNED BY ${name} antes de DROP\nHINT:  DROP OWNED BY ${name};`);
     }
-    // Si es miembro de un rol privilegiado, también debe REASSIGN primero (herencia)
+    // Si es miembro de un rol privilegiado, debe resolver sus objetos antes de DROP
     const memberOfPrivileged = [...(this.membership[k]||[])].some(g=> this.hasAnyPrivilege(g));
     if(memberOfPrivileged && !this.reassignedDone[k]){
-      throw new Error(`ERROR:  el usuario "${name}" es miembro de un rol con privilegios. Debe hacer REASSIGN OWNED BY ${name} TO postgres antes de DROP`);
+      throw new Error(`ERROR:  el usuario "${name}" es miembro de un rol con privilegios. Debe hacer REASSIGN OWNED BY ${name} TO postgres o DROP OWNED BY ${name} antes de DROP`);
     }
     // check members (si es grupo con miembros)
     if(r.members.size>0) throw new Error(`ERROR:  el rol "${name}" no puede ser eliminado porque tiene miembros. Haga REVOKE ${name} FROM usuario primero`);
@@ -188,6 +211,13 @@ class RoleManager{
       this.privs[k]={db:{}, schema:{}, allTables:{}, table:{}};
       this.save();
     }
+  }
+  setSuperuser(name, bool){
+    const k=name.toLowerCase();
+    if(!this.hasRole(k)) throw new Error(`ERROR:  no existe el rol «${name}»`);
+    if(k==='postgres') throw new Error('ERROR:  no se puede quitar el rol superusuario a postgres');
+    this.roles[k].superuser=bool;
+    this.save();
   }
   // privilege grants - al otorgar nuevo privilegio, se invalida REASSIGN/DROP previo
   grantDbPriv(role, db, priv){
@@ -422,7 +452,7 @@ class DatabaseEngine{
     const k=name.toLowerCase();
     if(this.hasDatabase(k)) throw new Error(`ERROR:  la base de datos "${name}" ya existe`);
     if(!/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(name)) throw new Error('Nombre de BD inválido');
-    if(!this.rm.isSuperUser(creator)) throw new Error(`ERROR:  permiso denegado para crear base de datos\nEstado SQL: 42501`);
+    if(!this.rm.isSuperUser(creator)) throw sqlError('permiso denegado para crear base de datos', {sqlstate:'42501'});
     this.databases[k]={nameOriginal:name, tables:{}};
     this.save();
   }
@@ -438,7 +468,7 @@ class DatabaseEngine{
   useDatabase(name, actor){
     const k=name.toLowerCase();
     if(!this.hasDatabase(k)) throw new Error(`ERROR:  no existe la base de datos «${name}»`);
-    if(!this.rm.canConnect(actor, k)) throw new Error(`ERROR:  permiso denegado a la base de datos "${name}"\nDETAIL:  El usuario no tiene privilegio CONNECT.\nEstado SQL: 42501`);
+    if(!this.rm.canConnect(actor, k)) throw sqlError(`permiso denegado a la base de datos "${name}"`, {detail:'El usuario no tiene privilegio CONNECT.', sqlstate:'42501'});
     this.rm.currentDB=this.databases[k].nameOriginal;
     this.save();
   }
@@ -458,9 +488,24 @@ class DatabaseEngine{
     if(!tbls[k]) throw new Error(`ERROR:  la relación «${name}» no existe`);
     return tbls[k];
   }
+  // ¿El actor es dueño de la tabla (o es superuser)? Permite delegar GRANT sobre ella.
+  isOwnerOfTable(actor, tableName){
+    if(this.rm.isSuperUser(actor)) return true;
+    const tbls=this.getCurrentTables();
+    const t=tbls[tableName.toLowerCase()];
+    return !!t && t.owner.toLowerCase()===actor.toLowerCase();
+  }
+  // ¿El actor puede otorgar sobre TODAS las tablas del esquema? (superuser, o dueño de todas).
+  canGrantOnAllTables(actor, schema='public'){
+    if(this.rm.isSuperUser(actor)) return true;
+    const tbls=this.getCurrentTables();
+    const db=this.rm.currentDB.toLowerCase();
+    if(!Object.keys(tbls).length) return true; // sin tablas no hay objetos que proteger
+    return Object.values(tbls).every(t=> t.owner.toLowerCase()===actor.toLowerCase());
+  }
   createTable(name, columns, creator){
     const db=this.rm.currentDB;
-    if(!this.rm.canCreateInSchema(creator, db, 'public')) throw new Error(`ERROR:  permiso denegado para esquema public\nDETAIL:  El usuario no tiene privilegio CREATE ni USAGE en el esquema.\nEstado SQL: 42501`);
+    if(!this.rm.canCreateInSchema(creator, db, 'public')) throw sqlError('permiso denegado para esquema public', {detail:'El usuario no tiene privilegio CREATE ni USAGE en el esquema.', sqlstate:'42501'});
     const tbls=this.getCurrentTables();
     const k=name.toLowerCase();
     if(tbls[k]) throw new Error(`ERROR:  la relación "${name}" ya existe`);
@@ -482,7 +527,7 @@ class DatabaseEngine{
     const t=this.getTable(name);
     // need DELETE or TRUNCATE? We'll require DELETE or owner
     if(!this.rm.isSuperUser(actor) && t.owner!==actor.toLowerCase()){
-      if(!this.rm.canDelete(actor, this.rm.currentDB, 'public', name)) throw new Error(`ERROR:  permiso denegado a la tabla ${name}\nEstado SQL: 42501`);
+      if(!this.rm.canDelete(actor, this.rm.currentDB, 'public', name)) throw sqlError('permiso denegado a la tabla '+name, {sqlstate:'42501'});
     }
     t.rows=[];
     this.save();
@@ -490,7 +535,7 @@ class DatabaseEngine{
   // ALTER TABLE - DDL para UPDATE/DELETE de estructura
   alterTableAddColumn(tableName, colDef, actor){
     const db=this.rm.currentDB;
-    if(!this.rm.canCreateInSchema(actor, db, 'public')) throw new Error(`ERROR:  permiso denegado para esquema public\nEstado SQL: 42501`);
+    if(!this.rm.canCreateInSchema(actor, db, 'public')) throw sqlError('permiso denegado para esquema public', {sqlstate:'42501'});
     const table=this.getTable(tableName);
     if(!this.rm.isSuperUser(actor) && table.owner!==actor.toLowerCase()) throw new Error(`ERROR:  debe ser dueño de la relación ${tableName} o superusuario`);
     if(table.columns.find(c=>c.name.toLowerCase()===colDef.name.toLowerCase())) throw new Error(`ERROR:  la columna «${colDef.name}» ya existe`);
@@ -504,15 +549,15 @@ class DatabaseEngine{
   }
   alterTableDropColumn(tableName, colName, actor){
     const db=this.rm.currentDB;
-    if(!this.rm.canCreateInSchema(actor, db, 'public')) throw new Error(`ERROR:  permiso denegado para esquema public\nEstado SQL: 42501`);
+    if(!this.rm.canCreateInSchema(actor, db, 'public')) throw sqlError('permiso denegado para esquema public', {sqlstate:'42501'});
     const table=this.getTable(tableName);
     if(!this.rm.isSuperUser(actor) && table.owner!==actor.toLowerCase()) throw new Error(`ERROR:  debe ser dueño de la relación ${tableName} o superusuario`);
     const idx=table.columns.findIndex(c=>c.name.toLowerCase()===colName.toLowerCase());
     if(idx===-1) throw new Error(`ERROR:  la columna «${colName}» no existe`);
+    const realName=table.columns[idx].name;
     table.columns.splice(idx,1);
-    table.rows.forEach(r=> delete r[colName]);
-    // También borrar posibles referencias por nombre original
-    const realName=table.columns[idx]?.name;
+    // Borrar de cada fila la referencia a la columna eliminada usando su nombre real
+    table.rows.forEach(r=> delete r[realName]);
     this.save();
   }
   alterTableRename(tableName, newName, actor){
@@ -521,7 +566,7 @@ class DatabaseEngine{
     const nk=newName.toLowerCase();
     if(!tbls[k]) throw new Error(`ERROR:  la relación «${tableName}» no existe`);
     if(tbls[nk]) throw new Error(`ERROR:  la relación «${newName}» ya existe`);
-    if(!this.rm.canCreateInSchema(actor, this.rm.currentDB, 'public')) throw new Error(`ERROR:  permiso denegado para esquema public\nEstado SQL: 42501`);
+    if(!this.rm.canCreateInSchema(actor, this.rm.currentDB, 'public')) throw sqlError('permiso denegado para esquema public', {sqlstate:'42501'});
     if(!this.rm.isSuperUser(actor) && tbls[k].owner!==actor.toLowerCase()) throw new Error(`ERROR:  debe ser dueño de la relación ${tableName} o superusuario`);
     tbls[nk]=tbls[k];
     tbls[nk].nameOriginal=newName;
@@ -530,7 +575,7 @@ class DatabaseEngine{
   }
   alterTableRenameColumn(tableName, oldCol, newCol, actor){
     const table=this.getTable(tableName);
-    if(!this.rm.canCreateInSchema(actor, this.rm.currentDB, 'public')) throw new Error(`ERROR:  permiso denegado para esquema public\nEstado SQL: 42501`);
+    if(!this.rm.canCreateInSchema(actor, this.rm.currentDB, 'public')) throw sqlError('permiso denegado para esquema public', {sqlstate:'42501'});
     if(!this.rm.isSuperUser(actor) && table.owner!==actor.toLowerCase()) throw new Error(`ERROR:  debe ser dueño de la relación ${tableName} o superusuario`);
     const col=table.columns.find(c=>c.name.toLowerCase()===oldCol.toLowerCase());
     if(!col) throw new Error(`ERROR:  la columna «${oldCol}» no existe`);
@@ -586,7 +631,7 @@ class DatabaseEngine{
   describe(name){ return this.getTable(name); }
   insert(tableName, obj, actor){
     const db=this.rm.currentDB;
-    if(!this.rm.canInsert(actor, db, 'public', tableName)) throw new Error(`ERROR:  permiso denegado a la tabla ${tableName}\nEstado SQL: 42501`);
+    if(!this.rm.canInsert(actor, db, 'public', tableName)) throw sqlError('permiso denegado a la tabla '+tableName, {sqlstate:'42501'});
     const table=this.getTable(tableName);
     const row={};
     table.columns.forEach(col=>{
@@ -598,7 +643,7 @@ class DatabaseEngine{
       const coerced=this.coerce(val, col.type);
       // NOT NULL validación
       if((col.notNull || col.primaryKey) && (coerced===null || coerced===undefined)){
-        throw new Error(`ERROR:  el valor nulo en la columna «${col.name}» viola la restricción not-null\nDETAIL:  La columna «${col.name}» de la relación «${tableName}» contiene restricción NOT NULL.\nEstado SQL: 23502`);
+        throw sqlError(`el valor nulo en la columna «${col.name}» viola la restricción not-null`, {detail:`La columna «${col.name}» de la relación «${tableName}» contiene restricción NOT NULL.`, sqlstate:'23502'});
       }
       row[col.name]=coerced;
     });
@@ -607,7 +652,7 @@ class DatabaseEngine{
       if((col.unique || col.primaryKey) && row[col.name]!==null){
         const exists=table.rows.some(r=> String(r[col.name])===String(row[col.name]));
         if(exists){
-          throw new Error(`ERROR:  llave duplicada viola restricción de unicidad «${tableName}_${col.name}_key»\nDETAIL:  La llave (${col.name})=(${row[col.name]}) ya existe.\nEstado SQL: 23505`);
+          throw sqlError(`llave duplicada viola restricción de unicidad «${tableName}_${col.name}_key»`, {detail:`La llave (${col.name})=(${row[col.name]}) ya existe.`, sqlstate:'23505'});
         }
       }
     });
@@ -643,7 +688,7 @@ class DatabaseEngine{
   }
   select(tableName, cols, whereFn, orderBy, limit, actor){
     const db=this.rm.currentDB;
-    if(!this.rm.canSelect(actor, db, 'public', tableName)) throw new Error(`ERROR:  permiso denegado a la tabla ${tableName}\nEstado SQL: 42501`);
+    if(!this.rm.canSelect(actor, db, 'public', tableName)) throw sqlError('permiso denegado a la tabla '+tableName, {sqlstate:'42501'});
     const table=this.getTable(tableName);
     let rows=[...table.rows];
     if(whereFn) rows=rows.filter(whereFn);
@@ -677,7 +722,7 @@ class DatabaseEngine{
   }
   update(tableName, setObj, whereFn, actor){
     const db=this.rm.currentDB;
-    if(!this.rm.canUpdate(actor, db, 'public', tableName)) throw new Error(`ERROR:  permiso denegado a la tabla ${tableName}\nEstado SQL: 42501`);
+    if(!this.rm.canUpdate(actor, db, 'public', tableName)) throw sqlError('permiso denegado a la tabla '+tableName, {sqlstate:'42501'});
     const table=this.getTable(tableName);
     // Pre-validar NOT NULL y UNIQUE antes de modificar
     const rowsToUpdate=table.rows.filter(r=> !whereFn || whereFn(r));
@@ -688,7 +733,7 @@ class DatabaseEngine{
         if(!real) throw new Error(`ERROR:  la columna «${k}» no existe`);
         const newVal=this.coerce(setObj[k], real.type);
         if((real.notNull || real.primaryKey) && (newVal===null || newVal===undefined)){
-          throw new Error(`ERROR:  el valor nulo en la columna «${real.name}» viola la restricción not-null\nEstado SQL: 23502`);
+          throw sqlError(`el valor nulo en la columna «${real.name}» viola la restricción not-null`, {sqlstate:'23502'});
         }
         if((real.unique || real.primaryKey) && newVal!==null){
           const conflict=table.rows.some(r=> r!==row && String(r[real.name])===String(newVal));
@@ -696,7 +741,7 @@ class DatabaseEngine{
           const conflictInBatch=rowsToUpdate.some(r=> r!==row && String(this.coerce(setObj[k], real.type))===String(newVal) && String(r[real.name])!==String(newVal));
           // Si el nuevo valor ya existe en otra fila (incluyendo no actualizadas) -> error
           if(conflict){
-            throw new Error(`ERROR:  llave duplicada viola restricción de unicidad «${tableName}_${real.name}_key»\nDETAIL:  La llave (${real.name})=(${newVal}) ya existe.\nEstado SQL: 23505`);
+            throw sqlError(`llave duplicada viola restricción de unicidad «${tableName}_${real.name}_key»`, {detail:`La llave (${real.name})=(${newVal}) ya existe.`, sqlstate:'23505'});
           }
         }
       }
@@ -716,7 +761,7 @@ class DatabaseEngine{
   }
   delete(tableName, whereFn, actor){
     const db=this.rm.currentDB;
-    if(!this.rm.canDelete(actor, db, 'public', tableName)) throw new Error(`ERROR:  permiso denegado a la tabla ${tableName}\nEstado SQL: 42501`);
+    if(!this.rm.canDelete(actor, db, 'public', tableName)) throw sqlError('permiso denegado a la tabla '+tableName, {sqlstate:'42501'});
     const table=this.getTable(tableName);
     const before=table.rows.length;
     if(!whereFn) table.rows=[];
@@ -1015,9 +1060,9 @@ class Terminal{
     if(low.startsWith('\\tema')){ this.handleTema(stmt); return; }
     if(low.startsWith('\\color')){ this.handleColor(stmt); return; }
     if(low==='\\acciones' || low==='\\acciones;' || low.startsWith('\\acciones ')){ this.handleAcciones(); return; }
-    if(low==='\\ayuda' || low==='\\ayuda;'){ const p=document.getElementById('help-panel'); document.getElementById('teoria-panel').style.display='none'; document.getElementById('proyecto-panel').style.display='none'; p.style.display=p.style.display==='block'?'none':'block'; if(p.style.display==='block') this.print('<span class="muted">Panel Ayuda mostrado — \\ayuda para ocultar</span>','line muted'); return; }
-    if(low==='\\teoria' || low==='\\teoria;'){ const p=document.getElementById('teoria-panel'); document.getElementById('help-panel').style.display='none'; document.getElementById('proyecto-panel').style.display='none'; p.style.display=p.style.display==='block'?'none':'block'; if(p.style.display==='block') this.print('<span class="muted">Panel Teoría mostrado — \\teoria para ocultar</span>','line muted'); return; }
-    if(low==='\\proyecto' || low==='\\proyecto;' || low.startsWith('\\proyecto ')){ const p=document.getElementById('proyecto-panel'); document.getElementById('help-panel').style.display='none'; document.getElementById('teoria-panel').style.display='none'; p.style.display=p.style.display==='block'?'none':'block'; if(p.style.display==='block') this.print('<span class="muted">Panel Proyecto mostrado — \\proyecto para ocultar</span>','line muted'); return; }
+    if(low==='\\ayuda' || low==='\\ayuda;'){ togglePanel('ayuda'); this.print('<span class="muted">Panel Ayuda mostrado — \\ayuda para ocultar</span>','line muted'); return; }
+    if(low==='\\teoria' || low==='\\teoria;'){ togglePanel('teoria'); this.print('<span class="muted">Panel Teoría mostrado — \\teoria para ocultar</span>','line muted'); return; }
+    if(low==='\\proyecto' || low==='\\proyecto;' || low.startsWith('\\proyecto ')){ togglePanel('proyecto'); this.print('<span class="muted">Panel Proyecto mostrado — \\proyecto para ocultar</span>','line muted'); return; }
     if(low.startsWith('theme')){ this.handleTheme(stmt); return; }
     if(low.startsWith('color')){ this.handleColorLegacy(stmt); return; }
 
@@ -1034,24 +1079,42 @@ class Terminal{
 
     // ROLE MANAGEMENT
     m=stmt.match(/^create\s+role\s+(\w+)\s+nologin\s*;?$/i); if(m){
-      if(!this.rm.isSuperUser(this.rm.currentRole)) throw new Error('ERROR:  permiso denegado para crear rol\nEstado SQL: 42501');
+      if(!this.rm.isSuperUser(this.rm.currentRole)) throw sqlError('permiso denegado para crear rol', {sqlstate:'42501'});
       this.rm.createRole(m[1], false, false); this.print('CREATE ROLE','line success'); return;
     }
     m=stmt.match(/^create\s+user\s+(\w+)\s+with\s+password\s+'[^']*'\s*;?$/i); if(m){
-      if(!this.rm.isSuperUser(this.rm.currentRole)) throw new Error('ERROR:  permiso denegado para crear rol\nEstado SQL: 42501');
+      if(!this.rm.isSuperUser(this.rm.currentRole)) throw sqlError('permiso denegado para crear rol', {sqlstate:'42501'});
       this.rm.createRole(m[1], true, false); this.print('CREATE ROLE','line success'); return;
     }
     m=stmt.match(/^create\s+role\s+(\w+)\s+with\s+login\s+password\s+'[^']*'\s*;?$/i); if(m){
       if(!this.rm.isSuperUser(this.rm.currentRole)) throw new Error('ERROR:  permiso denegado');
       this.rm.createRole(m[1], true, false); this.print('CREATE ROLE','line success'); return;
     }
-    m=stmt.match(/^drop\s+(user|role)\s+(\w+)\s*;?$/i); if(m){
+    // ALTER ROLE <rol> SUPERUSER / NOSUPERUSER
+    m=stmt.match(/^alter\s+role\s+(\w+)\s+(superuser|nosuperuser)\s*;?$/i); if(m){
+      if(!this.rm.isSuperUser(this.rm.currentRole)) throw sqlError('permiso denegado para ALTER ROLE', {sqlstate:'42501'});
+      const doSuper=m[2].toLowerCase()==='superuser';
+      this.rm.setSuperuser(m[1], doSuper);
+      this.print(`ALTER ROLE — ${m[1]} ahora es ${doSuper?'SUPERUSER':'usuario normal (NOSUPERUSER)'}`,'line success'); return;
+    }
+    // DROP ROLE: solo superuser, exige REASSIGN/DROP OWNED según corresponda
+    m=stmt.match(/^drop\s+(?:user|role)\s+(\w+)\s*;?$/i); if(m){
       if(!this.rm.isSuperUser(this.rm.currentRole)) throw new Error('ERROR:  debe ser superusuario para eliminar roles');
-      this.rm.dropRole(m[2]); this.print('DROP ROLE','line success'); return;
+      this.rm.dropRole(m[1]); this.print('DROP ROLE','line success'); return;
+    }
+    // REVOKE ALL ... FROM rol  ->  quita todos los privilegios del rol (no la membresía)
+    const revokeAll=stmt.match(/^revoke\s+all(?:\s+(?:privileges?|on\s+(?:all\s+)?tables?\s+in\s+schema\s+\w+))?\s+from\s+(\w+)\s*;?$/i);
+    if(revokeAll){
+      if(!this.rm.isSuperUser(this.rm.currentRole)) throw sqlError('permiso denegado para REVOKE', {sqlstate:'42501'});
+      const r=revokeAll[1].toLowerCase();
+      if(!this.rm.hasRole(r)) throw new Error(`ERROR:  no existe el rol «${r}»`);
+      this.rm.clearPrivileges(r);
+      this.print(`REVOKE — privilegios de tablas/esquema/db revocados de ${r}`,'line success');
+      return;
     }
     // GRANT role TO user
     m=stmt.match(/^grant\s+(\w+)\s+to\s+(\w+)\s*;?$/i); if(m){
-      if(!this.rm.isSuperUser(this.rm.currentRole)) throw new Error('ERROR:  permiso denegado para GRANT\nEstado SQL: 42501');
+      if(!this.rm.isSuperUser(this.rm.currentRole)) throw sqlError('permiso denegado para GRANT', {sqlstate:'42501'});
       this.rm.grantRole(m[1], m[2]); this.print('GRANT ROLE','line success'); return;
     }
     // REVOKE role FROM user (membresía)
@@ -1087,20 +1150,24 @@ class Terminal{
     }
     // GRANT privs ON ALL TABLES IN SCHEMA schema TO role
     m=stmt.match(/^grant\s+([\w\s,]+)\s+on\s+all\s+tables\s+in\s+schema\s+(\w+)\s+to\s+(\w+)\s*;?$/i); if(m){
-      if(!this.rm.isSuperUser(this.rm.currentRole)) throw new Error('ERROR:  permiso denegado para GRANT');
       const privs=m[1].split(',').map(s=>s.trim().toUpperCase()).filter(Boolean);
       const schema=m[2]; const role=m[3];
       if(!this.rm.hasRole(role)) throw new Error(`ERROR:  no existe el rol «${role}»`);
+      if(!this.rm.isSuperUser(this.rm.currentRole) && !this.engine.canGrantOnAllTables(this.rm.currentRole, schema)){
+        throw sqlError('permiso denegado para GRANT', {detail:`Debe ser superusuario o dueño de todas las tablas del esquema «${schema}» para otorgar privilegios.`, sqlstate:'42501'});
+      }
       const valid=['SELECT','INSERT','UPDATE','DELETE'];
       privs.forEach(p=>{ if(!valid.includes(p)) throw new Error(`ERROR:  privilegio no reconocido: ${p}`); this.rm.grantAllTablesPriv(role, this.rm.currentDB, schema, p); });
       this.print('GRANT','line success'); return;
     }
     // GRANT SELECT ON table TO role (specific table)
     m=stmt.match(/^grant\s+([\w\s,]+)\s+on\s+(\w+)\s+to\s+(\w+)\s*;?$/i); if(m){
-      if(!this.rm.isSuperUser(this.rm.currentRole)) throw new Error('ERROR:  permiso denegado para GRANT');
       const privs=m[1].split(',').map(s=>s.trim().toUpperCase()).filter(Boolean);
       const table=m[2]; const role=m[3];
       if(!this.rm.hasRole(role)) throw new Error(`ERROR:  no existe el rol «${role}»`);
+      if(!this.rm.isSuperUser(this.rm.currentRole) && !this.engine.isOwnerOfTable(this.rm.currentRole, table)){
+        throw sqlError(`permiso denegado para GRANT`, {detail:`Debe ser superusuario o dueño de la relación «${table}» para otorgar privilegios.`, sqlstate:'42501'});
+      }
       const valid=['SELECT','INSERT','UPDATE','DELETE'];
       privs.forEach(p=>{ if(!valid.includes(p)) throw new Error(`ERROR:  privilegio no reconocido: ${p}`); this.rm.grantTablePriv(role, this.rm.currentDB, 'public', table, p); });
       this.print('GRANT','line success'); return;
@@ -1237,7 +1304,7 @@ class Terminal{
     if(!this.engine.hasDatabase(k)) throw new Error(`ERROR:  no existe la base de datos «${dbName}»`);
     // RF-07 ESTRICTO OFFLINE: BACKUP solo superuser (postgres). Cualquier usuario creado, aunque tenga CONNECT/USAGE/SELECT, NO puede hacer backup.
     if(!this.rm.isSuperUser(this.rm.currentRole)){
-      throw new Error(`ERROR:  permiso denegado para BACKUP DATABASE\nDETAIL:  Debe ser superusuario para ejecutar BACKUP. El rol "${this.rm.currentRole}" no es superuser.\nEstado SQL: 42501`);
+      throw sqlError('permiso denegado para BACKUP DATABASE', {detail:`Debe ser superusuario para ejecutar BACKUP. El rol "${this.rm.currentRole}" no es superuser.`, sqlstate:'42501'});
     }
     const db=this.engine.databases[k];
     let dump=`-- =====================================================\n`;
@@ -1343,7 +1410,7 @@ class Terminal{
     const names=Object.keys(tbls);
     // RF-07 ESTRICTO: \dt requiere USAGE, si no → 42501 y no muestra nada (antes solo advertía)
     if(!this.rm.hasSchemaPriv(this.rm.currentRole, this.rm.currentDB, 'public', 'USAGE') && !this.rm.isSuperUser(this.rm.currentRole)){
-      throw new Error(`ERROR:  permiso denegado para esquema public\nDETAIL:  El usuario no tiene privilegio USAGE en el esquema.\nEstado SQL: 42501`);
+      throw sqlError('permiso denegado para esquema public', {detail:'El usuario no tiene privilegio USAGE en el esquema.', sqlstate:'42501'});
     }
     if(names.length===0){ this.print("Did not find any relation.",'line info'); return; }
     let out="             List of relations\n";
@@ -1481,7 +1548,7 @@ class Terminal{
     const m=stmt.match(/(?:describe|desc|show\s+columns\s+from)\s+(\w+)\s*;?$/i);
     if(!m) throw new Error('Sintaxis: DESCRIBE <tabla>');
     const t=this.engine.describe(m[1]);
-    if(!this.rm.hasSchemaPriv(this.rm.currentRole, this.rm.currentDB, 'public', 'USAGE') && !this.rm.isSuperUser(this.rm.currentRole)) throw new Error(`ERROR:  permiso denegado para esquema public\nEstado SQL: 42501`);
+    if(!this.rm.hasSchemaPriv(this.rm.currentRole, this.rm.currentDB, 'public', 'USAGE') && !this.rm.isSuperUser(this.rm.currentRole)) throw sqlError('permiso denegado para esquema public', {sqlstate:'42501'});
     const rows=t.columns.map(c=>({Field:c.name, Type:c.type, Null:'YES', Key:'', Default:null, Owner:t.owner}));
     this.printTable(['Field','Type','Null','Key','Default','Owner'], rows);
   }
@@ -1655,83 +1722,37 @@ const term=new Terminal(engine, rm);
 const savedTheme=localStorage.getItem(THEME_KEY);
 if(savedTheme) term.applyTheme(savedTheme);
 
-// Guardas por si existen (compatibilidad), sino no-op
-const applyBtn=document.getElementById('applyCustom');
-if(applyBtn) applyBtn.addEventListener('click', ()=>{
-  const bg=document.getElementById('bgPicker').value;
-  const fg=document.getElementById('fgPicker').value;
-  const ac=document.getElementById('accentPicker').value;
-  document.documentElement.style.setProperty('--bg', bg);
-  document.documentElement.style.setProperty('--fg', fg);
-  document.documentElement.style.setProperty('--accent', ac);
-  document.body.style.background=bg;
-  term.print(`Colores aplicados bg=${bg} fg=${fg} accent=${ac}`,'line success');
-});
-const resetBtn=document.getElementById('resetCustom');
-if(resetBtn) resetBtn.addEventListener('click', ()=>{
-  document.documentElement.style.removeProperty('--bg');
-  document.documentElement.style.removeProperty('--fg');
-  document.documentElement.style.removeProperty('--accent');
-  document.body.style.removeProperty('background');
-  const cur=localStorage.getItem(THEME_KEY)||'alma';
-  term.applyTheme(cur);
-  term.print('Colores restaurados','line success');
-});
+// Alternar/mostrar paneles (Ayuda/Teoría/Proyecto). Solo uno visible a la vez.
+// Hace scroll para que el panel abierto quede a la vista y reenfoca la barra de comandos.
+const PANEL_IDS={ayuda:'help-panel', teoria:'teoria-panel', proyecto:'proyecto-panel'};
+function togglePanel(name){
+  const id=PANEL_IDS[name]; if(!id) return false;
+  const target=document.getElementById(id); if(!target) return false;
+  const willShow=target.style.display!=='block';
+  ['help-panel','teoria-panel','proyecto-panel'].forEach(pid=>{
+    const el=document.getElementById(pid); if(el) el.style.display=(pid===id && willShow)?'block':'none';
+  });
+  const input=document.getElementById('cmdInput');
+  if(input) input.focus();
+  if(willShow){
+    // Bajar el scroll para que el panel abierto quede visible (si está desplazado el contenedor).
+    target.scrollTop=target.scrollHeight;
+    const cont=target.closest('.terminal-block, .workspace, .terminal');
+    if(cont && cont.scrollTop>0) cont.scrollTop=cont.scrollHeight;
+    if(target.scrollIntoView) target.scrollIntoView({block:'nearest', behavior:'smooth'});
+  }
+  return willShow;
+}
 
-// Export/Import ahora por comando: \export, \import, \reset  (botones removidos)
-const btnExport=document.getElementById('btnExport');
-if(btnExport) btnExport.addEventListener('click', ()=>{
-  const data=engine.exportData();
-  const blob=new Blob([data],{type:'application/json'});
-  const url=URL.createObjectURL(blob);
-  const a=document.createElement('a'); a.href=url; a.download='alma_psql_export.json'; a.click();
-  URL.revokeObjectURL(url);
-  term.print('Exportado','line success');
-});
-const btnImport=document.getElementById('btnImport');
-if(btnImport) btnImport.addEventListener('click', ()=> document.getElementById('fileImport').click());
-const fileImport=document.getElementById('fileImport');
-if(fileImport) fileImport.addEventListener('change', e=>{
-  const file=e.target.files[0]; if(!file) return;
-  const r=new FileReader();
-  r.onload=()=>{ try{ engine.importData(r.result, rm.currentRole); term.print('Importado','line success'); }catch(err){ term.print(err.message,'line error'); }};
-  r.readAsText(file);
-});
-const btnWipe=document.getElementById('btnWipe');
-if(btnWipe) btnWipe.addEventListener('click', ()=>{
-  if(confirm('¿Borrar todo y reiniciar?')) engine.wipe();
-});
-const btnHelp=document.getElementById('btnHelp');
-if(btnHelp) btnHelp.addEventListener('click', ()=>{
-  const p=document.getElementById('help-panel');
-  document.getElementById('teoria-panel').style.display='none';
-  const pp=document.getElementById('proyecto-panel'); if(pp) pp.style.display='none';
-  p.style.display=p.style.display==='block'?'none':'block';
-});
-const btnTeoria=document.getElementById('btnTeoria');
-if(btnTeoria) btnTeoria.addEventListener('click', ()=>{
-  const p=document.getElementById('teoria-panel');
-  document.getElementById('help-panel').style.display='none';
-  const pp=document.getElementById('proyecto-panel'); if(pp) pp.style.display='none';
-  p.style.display=p.style.display==='block'?'none':'block';
-});
-const btnProyecto=document.getElementById('proyecto-panel');
-const btnProyectoBtn=document.getElementById('btnProyecto');
-if(btnProyectoBtn) btnProyectoBtn.addEventListener('click', ()=>{
-  const p=document.getElementById('proyecto-panel');
-  document.getElementById('help-panel').style.display='none';
-  document.getElementById('teoria-panel').style.display='none';
-  p.style.display=p.style.display==='block'?'none':'block';
-});
 // Nuevos botones input-area (sin sidebar)
 const btnEj=document.getElementById('btnEjecutar');
 if(btnEj) btnEj.addEventListener('click', ()=>{ term.exec(document.getElementById('cmdInput').value); document.getElementById('cmdInput').value=''; document.getElementById('cmdInput').focus(); });
 const btnHelpMini=document.getElementById('btnHelpMini');
-if(btnHelpMini) btnHelpMini.addEventListener('click', ()=> term.exec('\\ayuda'));
+if(btnHelpMini) btnHelpMini.addEventListener('click', ()=>{ togglePanel('ayuda'); if(document.getElementById('cmdInput')) document.getElementById('cmdInput').focus(); });
 const btnProyectoMini=document.getElementById('btnProyectoMini');
-if(btnProyectoMini) btnProyectoMini.addEventListener('click', ()=> term.exec('\\proyecto'));
+if(btnProyectoMini) btnProyectoMini.addEventListener('click', ()=>{ togglePanel('proyecto'); if(document.getElementById('cmdInput')) document.getElementById('cmdInput').focus(); });
 const btnTeoriaMini=document.getElementById('btnTeoriaMini');
-if(btnTeoriaMini) btnTeoriaMini.addEventListener('click', ()=> term.exec('\\teoria'));
+if(btnTeoriaMini) btnTeoriaMini.addEventListener('click', ()=>{ togglePanel('teoria'); if(document.getElementById('cmdInput')) document.getElementById('cmdInput').focus(); });
 function updClock(){ const n=new Date(); document.getElementById('clock').textContent=n.toLocaleString('es-PY',{weekday:'short',hour:'2-digit',minute:'2-digit',second:'2-digit'}); }
 setInterval(updClock,1000); updClock();
 document.getElementById('btnFullscreen').addEventListener('click', ()=>{
@@ -1742,4 +1763,26 @@ document.getElementById('btnCopy').addEventListener('click', ()=>{
   const t=document.getElementById('output').innerText;
   navigator.clipboard.writeText(t).then(()=> term.print('Copiado','line success'));
 });
+
+// ===== Sentencias clicables en el panel de Ayuda =====
+// Un clic sobre un comando lo carga en la barra de entrada (si mensaje), listo para modificar o darle Enter.
+// Solo los <code> cuyo texto comience con un comando SQL/psql reconocido son clickables.
+const SQL_CMD_PREFIX = /^(create|grant|revoke|set|reset\s+role|alter|select|insert|update|delete|backup|drop\s+(database|table|owned)|truncate|describe|desc|show|use|\\c(?:onnect)?|\\list|\\l|\\dt|\\du|\\d|\\q|\\tema|\\color|\\acciones|\\ayuda|\\teoria|\\proyecto|\\h|status|help|neofetch|clear)(?=$|[\s;\\])/i;
+const helpPanel=document.getElementById('help-panel');
+if(helpPanel){
+  const input=document.getElementById('cmdInput');
+  // Marcar visualmente los comandos clicables
+  helpPanel.querySelectorAll('code').forEach(codeEl=>{
+    if(SQL_CMD_PREFIX.test(codeEl.textContent.trim())) codeEl.classList.add('clickable');
+  });
+  helpPanel.addEventListener('click', e=>{
+    const codeEl=e.target.closest('code.clickable');
+    if(!codeEl) return;
+    e.preventDefault();
+    const sql=codeEl.textContent.trim();
+    input.value=sql;
+    input.focus();
+    input.setSelectionRange(sql.length, sql.length);
+  });
+}
 setTimeout(()=> document.getElementById('cmdInput').focus(),100);

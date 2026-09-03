@@ -1,6 +1,8 @@
 global.localStorage={store:{},getItem(k){return this.store[k]||null},setItem(k,v){this.store[k]=v},removeItem(k){delete this.store[k]}};
 const fs=require('fs');
-let code=fs.readFileSync('C:\\Users\\Pedro Insfran\\Desktop\\emulador\\js\\app.js','utf8');
+const path=require('path');
+const APP_JS=path.join(__dirname,'..','js','app.js');
+let code=fs.readFileSync(APP_JS,'utf8');
 let cut=code.indexOf('// =============== INIT ===============');
 if(cut>0) code=code.substring(0,cut);
 eval(code+"\nglobal.RoleManager=RoleManager; global.DatabaseEngine=DatabaseEngine;");

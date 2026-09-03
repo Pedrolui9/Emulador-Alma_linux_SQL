@@ -77,6 +77,8 @@
         <li><code>CREATE ROLE desarrolladores NOLOGIN;</code></li>
         <li><code>CREATE USER salmada WITH PASSWORD 'Clave123';</code></li>
         <li><code>GRANT desarrolladores TO salmada;</code> / <code>REVOKE desarrolladores FROM salmada;</code></li>
+        <li><code>ALTER ROLE salmada SUPERUSER;</code> / <code>ALTER ROLE salmada NOSUPERUSER;</code> — dar/quitar rol superusuario</li>
+        <li><code>REVOKE ALL FROM salmada;</code> — quitar todos los privilegios</li>
         <li><code>SET ROLE salmada;</code> / <code>RESET ROLE;</code> / <code>\du</code></li>
       </ul>
       <h3>Permisos (validados 42501)</h3>
@@ -122,6 +124,7 @@
           <tr><td><code>JavaScript ES6</code> (vanilla)</td><td>Motor</td><td>Clases <code>RoleManager</code> + <code>DatabaseEngine</code> + <code>Terminal</code>. Sin frameworks, sin CDNs, sin backend.</td></tr>
           <tr><td><code>localStorage</code></td><td>Persistencia</td><td>Guarda BDs, tablas, filas, roles, privilegios, owner, REASSIGN/DROP. Persiste en sesión (RF-15).</td></tr>
           <tr><td><code>Git</code></td><td>Versiones</td><td>Repo privado <code>emulador-psql-almalinux</code> en GitHub.</td></tr>
+          <tr><td><code>Node.js</code> (24)</td><td>Testing</td><td><code>node --check</code> para sintaxis y <code>tests/run-all.js</code> para la suite de 6 pruebas (runner sin dependencias, usa solo el intérprete Node). Disponible vía <code>npm test</code>.</td></tr>
         </tbody>
       </table>
 
@@ -183,6 +186,8 @@
         <thead><tr><th>Comando</th><th>Función</th></tr></thead>
         <tbody>
           <tr><td><code>GRANT rol TO usuario;</code> / <code>REVOKE rol FROM usuario;</code></td><td>Membresía (solo superuser)</td></tr>
+          <tr><td><code>ALTER ROLE usuario SUPERUSER;</code> / <code>ALTER ROLE usuario NOSUPERUSER;</code></td><td>Convertir/descender de superusuario (solo superuser, no sobre postgres)</td></tr>
+          <tr><td><code>REVOKE ALL FROM usuario;</code></td><td>Quitar todos los privilegios de un rol (solo superuser)</td></tr>
           <tr><td><code>GRANT CONNECT ON DATABASE db TO rol;</code></td><td>Permiso conexión (superuser)</td></tr>
           <tr><td><code>GRANT USAGE ON SCHEMA public TO rol;</code> / <code>GRANT CREATE ON SCHEMA public TO rol;</code></td><td>Uso y creación en esquema (superuser)</td></tr>
           <tr><td><code>GRANT SELECT,INSERT ON ALL TABLES IN SCHEMA public TO rol;</code> / <code>REVOKE ... FROM rol;</code></td><td>Privilegios de tabla (superuser)</td></tr>
@@ -200,6 +205,7 @@
           <tr><td><code>CREATE ROLE rol_ventas NOLOGIN;</code></td><td>Crear rol grupo</td><td>requiere <code>;</code></td></tr>
           <tr><td><code>CREATE USER ana WITH PASSWORD '123';</code></td><td>Crear usuario login</td><td>requiere <code>;</code></td></tr>
           <tr><td><code>DROP ROLE rol_ventas;</code> / <code>DROP USER ana;</code></td><td>Borrar rol/usuario (exige <code>REASSIGN+DROP OWNED+REVOKE</code> si tiene privilegios)</td><td>requiere <code>;</code></td></tr>
+          <tr><td><code>ALTER ROLE ana SUPERUSER;</code> / <code>ALTER ROLE ana NOSUPERUSER;</code></td><td>Dar/quitar superusuario</td><td>requiere <code>;</code></td></tr>
           <tr><td><code>GRANT ... TO rol;</code> / <code>REVOKE ... FROM rol;</code></td><td>Dar/quitar privilegios</td><td>requiere <code>;</code></td></tr>
           <tr><td><code>SET ROLE ana;</code> / <code>RESET ROLE;</code></td><td>Cambiar de usuario / volver a postgres</td><td>requiere <code>;</code></td></tr>
           <tr><td><code>BACKUP DATABASE ventas;</code></td><td>Dump <code>CREATE TABLE + INSERT</code></td><td>requiere <code>;</code> (solo superuser)</td></tr>
@@ -220,6 +226,14 @@
           <tr><td><code>\acciones</code> / <code>\ayuda</code> / <code>\teoria</code> / <code>\q</code></td><td>Paneles y salida</td></tr>
         </tbody>
       </table>
+      <h3>9. Novedades / Calidad</h3>
+      <ul>
+        <li><b>Sentencias clicables:</b> en el panel Ayuda, un clic sobre un comando lo carga en la barra lista para modificar o dar Enter (sin mensaje). Solo comandos ejecutables completos son clickables (los fragmentos como <code>DROP COLUMN</code> o <code>;</code> no).</li>
+        <li><b>Owner-based GRANT:</b> el dueño (<code>owner</code>) de una tabla puede delegar <code>GRANT/REVOKE</code> sobre esa tabla o sobre <code>ALL TABLES</code> de un esquema que posea; <code>GRANT</code> sobre DATABASE/SCHEMA sigue siendo solo superuser.</li>
+        <li><b>Centralización de errores:</b> los errores psql se generan con <code>sqlError()</code> (formato <code>ERROR / DETAIL / Estado SQL</code>) en <code>42501 / 23502 / 23505</code>.</li>
+        <li><b>Semántica REASSIGN/DROP:</b> <code>REASSIGN OWNED</code> y <code>DROP OWNED</code> son independientes: un rol con objetos solo necesita <code>DROP OWNED</code>; un rol con privilegios sobre objetos de otros necesita <code>REASSIGN</code>.</li>
+        <li><b>Pruebas automatizadas:</b> suite en <code>tests/</code> con <code>tests/run-all.js</code>. Se ejecuta con <code>npm test</code> y valida permisos, UNIQUE/NOT NULL, ciclo de vida de roles, REVOKE y BACKUP. Resultado: <code>6 pasan, 0 fallan</code>.</li>
+      </ul>
       <div class="resumen">
         <b>Nota académica:</b> <b>Bash/Linux</b> (<code>clear, ls, pwd, whoami, date, uname -a, echo, history, status, neofetch, \tema, \color, \acciones, \ayuda, \teoria, \proyecto, \q, help</code>) entran <b>sin <code>;</code></b> y ejecutan al instante.<br>
         <b>psql/SQL</b> (<code>CREATE/DROP/ALTER, SELECT/INSERT/UPDATE/DELETE, GRANT/REVOKE, SET ROLE, \c, \l, \dt, \d, \du, BACKUP</code>) <b>requieren <code>;</code></b> para ejecutar; sin <code>;</code> el prompt cambia a <code>compras-#</code> y une con espacio hasta cerrar, como en AlmaLinux real.
